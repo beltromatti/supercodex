@@ -502,6 +502,33 @@ impl HistoryCell for PlainHistoryCell {
     }
 }
 
+/// 3D ASCII splash rendered at the top of a fresh session.
+pub(crate) fn new_super_codex_splash() -> PlainHistoryCell {
+    const ART: &[&str] = &[
+        r" ███████╗██╗   ██╗██████╗ ███████╗██████╗      ██████╗ ██████╗ ██████╗ ███████╗██╗  ██╗",
+        r" ██╔════╝██║   ██║██╔══██╗██╔════╝██╔══██╗    ██╔════╝██╔═══██╗██╔══██╗██╔════╝╚██╗██╔╝",
+        r" ███████╗██║   ██║██████╔╝█████╗  ██████╔╝    ██║     ██║   ██║██║  ██║█████╗   ╚███╔╝ ",
+        r" ╚════██║██║   ██║██╔═══╝ ██╔══╝  ██╔══██╗    ██║     ██║   ██║██║  ██║██╔══╝   ██╔██╗ ",
+        r" ███████║╚██████╔╝██║     ███████╗██║  ██║    ╚██████╗╚██████╔╝██████╔╝███████╗██╔╝ ██╗",
+        r" ╚══════╝ ╚═════╝ ╚═╝     ╚══════╝╚═╝  ╚═╝     ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝╚═╝  ╚═╝",
+    ];
+    let mut lines: Vec<Line<'static>> = ART
+        .iter()
+        .map(|row| Line::from(Span::from((*row).to_string()).cyan()))
+        .collect();
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![
+        "  ".into(),
+        Span::from("An unofficial fork of OpenAI Codex").dim(),
+        "  ".into(),
+        Span::from("·").dim(),
+        "  ".into(),
+        Span::from("github.com/beltromatti/supercodex").dim(),
+    ]));
+    lines.push(Line::from(""));
+    PlainHistoryCell { lines }
+}
+
 #[cfg_attr(debug_assertions, allow(dead_code))]
 #[derive(Debug)]
 pub(crate) struct UpdateAvailableHistoryCell {
@@ -1366,10 +1393,10 @@ impl HistoryCell for SessionHeaderHistoryCell {
 
         let make_row = |spans: Vec<Span<'static>>| Line::from(spans);
 
-        // Title line rendered inside the box: ">_ OpenAI Codex (vX)"
+        // Title line rendered inside the box: ">_ Super Codex (vX)"
         let title_spans: Vec<Span<'static>> = vec![
             Span::from(">_ ").dim(),
-            Span::from("OpenAI Codex").bold(),
+            Span::from("Super Codex").bold(),
             Span::from(" ").dim(),
             Span::from(format!("(v{})", self.version)).dim(),
         ];

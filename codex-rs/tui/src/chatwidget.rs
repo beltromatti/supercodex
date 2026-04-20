@@ -2035,6 +2035,9 @@ impl ChatWidget {
         let show_fast_status = self.should_show_fast_status(&model_for_header, event.service_tier);
         #[cfg(test)]
         let initial_messages = event.initial_messages.clone();
+        if self.show_welcome_banner {
+            self.add_to_history(history_cell::new_super_codex_splash());
+        }
         let session_info_cell = history_cell::new_session_info(
             &self.config,
             &model_for_header,
