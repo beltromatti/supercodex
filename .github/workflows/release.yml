@@ -24,7 +24,7 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Derive version from tag
         id: version
@@ -70,7 +70,7 @@ jobs:
       CARGO_NET_GIT_FETCH_WITH_CLI: "true"
       CARGO_NET_RETRY: "10"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install Linux build deps (libcap-dev for codex-linux-sandbox)
         if: runner.os == 'Linux'
@@ -172,7 +172,7 @@ jobs:
     needs: [prepare, build]
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Download all release artifacts
         uses: actions/download-artifact@v4
