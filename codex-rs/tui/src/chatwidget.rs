@@ -381,7 +381,17 @@ use crate::streaming::controller::PlanStreamController;
 use crate::streaming::controller::StreamController;
 
 use chrono::Local;
+use codex_login::AuthManager;
+use codex_login::SavedChatgptAccount;
+use codex_login::current_saved_chatgpt_account_id;
+use codex_login::list_saved_chatgpt_accounts;
+use codex_login::remove_saved_chatgpt_account;
+use codex_login::switch_active_chatgpt_account;
+use codex_login::upsert_active_chatgpt_account;
 use codex_file_search::FileMatch;
+use codex_login::CLIENT_ID;
+use codex_login::ServerOptions;
+use codex_login::run_login_server;
 use codex_protocol::openai_models::InputModality;
 use codex_protocol::openai_models::ModelPreset;
 use codex_protocol::openai_models::ReasoningEffort as ReasoningEffortConfig;
@@ -398,6 +408,8 @@ const USER_SHELL_COMMAND_HELP_TITLE: &str = "Prefix a command with ! to run it l
 const USER_SHELL_COMMAND_HELP_HINT: &str = "Example: !ls";
 const DEFAULT_OPENAI_BASE_URL: &str = "https://api.openai.com/v1";
 const DEFAULT_STATUS_LINE_ITEMS: [&str; 2] = ["model-with-reasoning", "current-dir"];
+const QWEN3_VL_AWQ_MODEL_SLUG: &str = "qwen3-vl-32b-instruct-awq";
+const VLLM_SERVER_PROMPT_PLACEHOLDER: &str = "https://YOUR-RUNPOD-ENDPOINT/v1";
 // Track information about an in-flight exec command.
 struct RunningCommand {
     command: Vec<String>,
@@ -7455,6 +7467,7 @@ impl ChatWidget {
                     /*sandbox_policy*/ None,
                     /*windows_sandbox_level*/ None,
                     Some(switch_model_for_events.clone()),
+                    /*provider_base_url*/ None,
                     Some(Some(default_effort)),
                     /*summary*/ None,
                     /*service_tier*/ None,
@@ -7580,6 +7593,7 @@ impl ChatWidget {
                             /*sandbox_policy*/ None,
                             /*windows_sandbox_level*/ None,
                             /*model*/ None,
+                            /*provider_base_url*/ None,
                             /*effort*/ None,
                             /*summary*/ None,
                             /*service_tier*/ None,
@@ -7807,6 +7821,21 @@ impl ChatWidget {
         }
 
         Some(trimmed.to_string())
+    }
+
+    fn normalize_openai_compatible_base_url(raw: &str) -> Option<String> {
+        let trimmed = raw.trim().trim_end_matches('/');
+        if trimmed.is_empty() {
+            return None;
+        }
+        if !trimmed.starts_with("http://") && !trimmed.starts_with("https://") {
+            return None;
+        }
+        if trimmed.ends_with("/v1") {
+            Some(trimmed.to_string())
+        } else {
+            Some(format!("{trimmed}/v1"))
+        }
     }
 
     pub(crate) fn open_model_popup_with_presets(&mut self, presets: Vec<ModelPreset>) {
@@ -8314,10 +8343,372 @@ impl ChatWidget {
             .send(AppEvent::UpdateReasoningEffort(effort));
     }
 
-    fn apply_model_and_effort(&self, model: String, effort: Option<ReasoningEffortConfig>) {
+    fn apply_model_and_effort(&mut self, model: String, effort: Option<ReasoningEffortConfig>) {
+        if model == QWEN3_VL_AWQ_MODEL_SLUG {
+            self.open_vllm_server_prompt_for_model(model, effort);
+            return;
+        }
         self.apply_model_and_effort_without_persist(model.clone(), effort);
         self.app_event_tx
             .send(AppEvent::PersistModelSelection { model, effort });
+    }
+
+    fn open_vllm_server_prompt_for_model(
+        &mut self,
+        model: String,
+        effort: Option<ReasoningEffortConfig>,
+    ) {
+        let tx = self.app_event_tx.clone();
+        let view = CustomPromptView::new(
+            "Qwen vLLM server".to_string(),
+            VLLM_SERVER_PROMPT_PLACEHOLDER.to_string(),
+            Some("Enter the public OpenAI-compatible server URL".to_string()),
+            Box::new(move |base_url: String| {
+                let Some(normalized_base_url) =
+                    Self::normalize_openai_compatible_base_url(base_url.as_str())
+                else {
+                    tx.send(AppEvent::InsertHistoryCell(Box::new(history_cell::new_error_event(
+                        "Invalid URL. Use http(s)://... and include /v1 (or it will be appended)."
+                            .to_string(),
+                    ))));
+                    return;
+                };
+
+                tx.send(AppEvent::CodexOp(Op::OverrideTurnContext {
+                    cwd: None,
+                    approval_policy: None,
+                    approvals_reviewer: None,
+                    sandbox_policy: None,
+                    windows_sandbox_level: None,
+                    model: Some(model.clone()),
+                    provider_base_url: Some(normalized_base_url.clone()),
+                    effort: Some(effort),
+                    summary: None,
+                    service_tier: None,
+                    collaboration_mode: None,
+                    personality: None,
+                }));
+                tx.send(AppEvent::UpdateModel(model.clone()));
+                tx.send(AppEvent::UpdateReasoningEffort(effort));
+                tx.send(AppEvent::PersistModelSelection {
+                    model: model.clone(),
+                    effort,
+                });
+                tx.send(AppEvent::PersistQwenVllmProvider {
+                    base_url: normalized_base_url,
+                });
+            }),
+        );
+
+        self.bottom_pane.show_view(Box::new(view));
+    }
+
+    fn load_saved_accounts_with_current(
+        &mut self,
+    ) -> Option<(Vec<SavedChatgptAccount>, Option<String>)> {
+        let accounts = match list_saved_chatgpt_accounts(&self.config.codex_home) {
+            Ok(accounts) => accounts,
+            Err(err) => {
+                self.add_error_message(format!("Failed to load saved accounts: {err}"));
+                return None;
+            }
+        };
+        let current_id = match current_saved_chatgpt_account_id(
+            &self.config.codex_home,
+            self.config.cli_auth_credentials_store_mode,
+        ) {
+            Ok(current_id) => current_id,
+            Err(err) => {
+                self.add_error_message(format!("Failed to resolve active account: {err}"));
+                return None;
+            }
+        };
+        Some((accounts, current_id))
+    }
+
+    fn open_accounts_list_popup(&mut self) {
+        let Some((accounts, current_id)) = self.load_saved_accounts_with_current() else {
+            return;
+        };
+
+        if accounts.is_empty() {
+            self.add_info_message(
+                "No saved ChatGPT accounts yet.".to_string(),
+                Some("Run /addaccount to add one.".to_string()),
+            );
+            return;
+        }
+
+        let items: Vec<SelectionItem> = accounts
+            .into_iter()
+            .map(|entry| {
+                let is_current = current_id.as_deref() == Some(entry.id.as_str());
+                let name = if is_current {
+                    format!("[ACTIVE] {}", entry.label)
+                } else {
+                    entry.label.clone()
+                };
+                SelectionItem {
+                    name,
+                    description: Some(entry.id.clone()),
+                    is_current,
+                    dismiss_on_select: true,
+                    search_value: Some(format!("{} {}", entry.label, entry.id)),
+                    ..Default::default()
+                }
+            })
+            .collect();
+
+        self.bottom_pane.show_selection_view(SelectionViewParams {
+            title: Some("Saved ChatGPT accounts".to_string()),
+            subtitle: Some("The active account is marked as [ACTIVE] and (current).".to_string()),
+            footer_hint: Some(standard_popup_hint_line()),
+            items,
+            is_searchable: true,
+            search_placeholder: Some("Type to search accounts".to_string()),
+            ..Default::default()
+        });
+        self.request_redraw();
+    }
+
+    fn open_swap_account_popup(&mut self) {
+        let Some((accounts, current_id)) = self.load_saved_accounts_with_current() else {
+            return;
+        };
+
+        if accounts.is_empty() {
+            self.add_info_message(
+                "No saved ChatGPT accounts available.".to_string(),
+                Some("Run /addaccount first.".to_string()),
+            );
+            return;
+        }
+
+        let codex_home = self.config.codex_home.clone();
+        let auth_credentials_store_mode = self.config.cli_auth_credentials_store_mode;
+        let auth_manager = AuthManager::shared_from_config(&self.config, false);
+        let mut items: Vec<SelectionItem> = Vec::with_capacity(accounts.len());
+
+        for entry in accounts {
+            let is_current = current_id.as_deref() == Some(entry.id.as_str());
+            let account_id = entry.id.clone();
+            let label = entry.label.clone();
+            let search_value = format!("{label} {account_id}");
+            let action_account_id = account_id.clone();
+
+            items.push(SelectionItem {
+                name: label.clone(),
+                description: Some(account_id.clone()),
+                is_current,
+                is_disabled: is_current,
+                disabled_reason: is_current.then_some("Already active".to_string()),
+                actions: vec![Box::new({
+                    let codex_home = codex_home.clone();
+                    let auth_manager = Arc::clone(&auth_manager);
+                    move |tx| match switch_active_chatgpt_account(
+                        &codex_home,
+                        auth_credentials_store_mode,
+                        &action_account_id,
+                    ) {
+                        Ok(selected) => {
+                            auth_manager.reload();
+                            tx.send(AppEvent::InsertHistoryCell(Box::new(
+                                history_cell::new_info_event(
+                                    format!("Switched active account to {}.", selected.label),
+                                    None,
+                                ),
+                            )));
+                        }
+                        Err(err) => {
+                            tx.send(AppEvent::InsertHistoryCell(Box::new(
+                                history_cell::new_error_event(format!(
+                                    "Failed to switch account: {err}",
+                                )),
+                            )));
+                        }
+                    }
+                })],
+                dismiss_on_select: true,
+                search_value: Some(search_value),
+                ..Default::default()
+            });
+        }
+
+        self.bottom_pane.show_selection_view(SelectionViewParams {
+            title: Some("Swap active ChatGPT account".to_string()),
+            footer_hint: Some(standard_popup_hint_line()),
+            items,
+            is_searchable: true,
+            search_placeholder: Some("Type to search accounts".to_string()),
+            ..Default::default()
+        });
+        self.request_redraw();
+    }
+
+    fn open_remove_account_popup(&mut self) {
+        let Some((accounts, current_id)) = self.load_saved_accounts_with_current() else {
+            return;
+        };
+
+        if accounts.is_empty() {
+            self.add_info_message("No saved accounts to remove.".to_string(), None);
+            return;
+        }
+
+        let codex_home = self.config.codex_home.clone();
+        let mut items: Vec<SelectionItem> = Vec::with_capacity(accounts.len());
+
+        for entry in accounts {
+            let is_current = current_id.as_deref() == Some(entry.id.as_str());
+            let account_id = entry.id.clone();
+            let label = entry.label.clone();
+            let search_value = format!("{label} {account_id}");
+            let action_account_id = account_id.clone();
+            let action_label = label.clone();
+
+            items.push(SelectionItem {
+                name: label.clone(),
+                description: Some(account_id.clone()),
+                is_current,
+                actions: vec![Box::new({
+                    let codex_home = codex_home.clone();
+                    move |tx| match remove_saved_chatgpt_account(&codex_home, &action_account_id) {
+                        Ok(true) => {
+                            let hint = if is_current {
+                                Some(
+                                    "The currently active auth remains valid until you switch or logout."
+                                        .to_string(),
+                                )
+                            } else {
+                                None
+                            };
+                            tx.send(AppEvent::InsertHistoryCell(Box::new(
+                                history_cell::new_info_event(
+                                    format!("Removed saved account {action_label}."),
+                                    hint,
+                                ),
+                            )));
+                        }
+                        Ok(false) => {
+                            tx.send(AppEvent::InsertHistoryCell(Box::new(
+                                history_cell::new_error_event(format!(
+                                    "Saved account not found: {action_label}",
+                                )),
+                            )));
+                        }
+                        Err(err) => {
+                            tx.send(AppEvent::InsertHistoryCell(Box::new(
+                                history_cell::new_error_event(format!(
+                                    "Failed to remove account: {err}",
+                                )),
+                            )));
+                        }
+                    }
+                })],
+                dismiss_on_select: true,
+                search_value: Some(search_value),
+                ..Default::default()
+            });
+        }
+
+        self.bottom_pane.show_selection_view(SelectionViewParams {
+            title: Some("Remove saved ChatGPT account".to_string()),
+            footer_hint: Some(standard_popup_hint_line()),
+            items,
+            is_searchable: true,
+            search_placeholder: Some("Type to search accounts".to_string()),
+            ..Default::default()
+        });
+        self.request_redraw();
+    }
+
+    fn start_add_account_login(&mut self) {
+        let tx = self.app_event_tx.clone();
+        let codex_home = self.config.codex_home.clone();
+        let forced_chatgpt_workspace_id = self.config.forced_chatgpt_workspace_id.clone();
+        let auth_credentials_store_mode = self.config.cli_auth_credentials_store_mode;
+        let auth_manager = AuthManager::shared_from_config(&self.config, false);
+
+        self.add_info_message(
+            "Starting ChatGPT login flow for /addaccount...".to_string(),
+            None,
+        );
+
+        tokio::spawn(async move {
+            if let Err(err) =
+                upsert_active_chatgpt_account(&codex_home, auth_credentials_store_mode)
+            {
+                warn!("failed to save currently active account before /addaccount: {err}");
+            }
+
+            let options = ServerOptions::new(
+                codex_home.to_path_buf(),
+                CLIENT_ID.to_string(),
+                forced_chatgpt_workspace_id,
+                auth_credentials_store_mode,
+            );
+
+            let server = match run_login_server(options) {
+                Ok(server) => server,
+                Err(err) => {
+                    tx.send(AppEvent::InsertHistoryCell(Box::new(
+                        history_cell::new_error_event(format!(
+                            "Failed to start local login server: {err}",
+                        )),
+                    )));
+                    return;
+                }
+            };
+
+            tx.send(AppEvent::InsertHistoryCell(Box::new(history_cell::new_info_event(
+                format!(
+                    "Local login server started on http://localhost:{}. If your browser did not open, visit: {}",
+                    server.actual_port, server.auth_url
+                ),
+                None,
+            ))));
+
+            match server.block_until_done().await {
+                Ok(()) => {
+                    match upsert_active_chatgpt_account(&codex_home, auth_credentials_store_mode) {
+                        Ok(Some(saved)) => {
+                            auth_manager.reload();
+                            tx.send(AppEvent::InsertHistoryCell(Box::new(
+                            history_cell::new_info_event(
+                                format!(
+                                    "Account added and saved: {}. Use /swapaccount to switch anytime.",
+                                    saved.label
+                                ),
+                                None,
+                            ),
+                        )));
+                        }
+                        Ok(None) => {
+                            tx.send(AppEvent::InsertHistoryCell(Box::new(
+                                history_cell::new_error_event(
+                                    "Login completed, but no ChatGPT credentials were found."
+                                        .to_string(),
+                                ),
+                            )));
+                        }
+                        Err(err) => {
+                            tx.send(AppEvent::InsertHistoryCell(Box::new(
+                                history_cell::new_error_event(format!(
+                                    "Login succeeded, but saving the account failed: {err}",
+                                )),
+                            )));
+                        }
+                    }
+                }
+                Err(err) => {
+                    tx.send(AppEvent::InsertHistoryCell(Box::new(
+                        history_cell::new_error_event(format!(
+                            "Account login did not complete: {err}",
+                        )),
+                    )));
+                }
+            }
+        });
     }
 
     /// Open the permissions popup (alias for /permissions).
@@ -8566,6 +8957,7 @@ impl ChatWidget {
                     Some(sandbox_clone.clone()),
                     /*windows_sandbox_level*/ None,
                     /*model*/ None,
+                    /*provider_base_url*/ None,
                     /*effort*/ None,
                     /*summary*/ None,
                     /*service_tier*/ None,
@@ -9375,6 +9767,7 @@ impl ChatWidget {
                 /*sandbox_policy*/ None,
                 /*windows_sandbox_level*/ None,
                 /*model*/ None,
+                /*provider_base_url*/ None,
                 /*effort*/ None,
                 /*summary*/ None,
                 Some(service_tier),

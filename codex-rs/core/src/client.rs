@@ -1489,6 +1489,13 @@ impl ModelClientSession {
         self.websocket_session = WebsocketSession::default();
         activated
     }
+
+    /// Drops websocket state so the next request reconnects with fresh auth headers.
+    ///
+    /// This keeps the current transport preference (WebSocket vs HTTP fallback) unchanged.
+    pub(crate) fn reset_websocket_state_for_auth_change(&mut self) {
+        self.websocket_session = WebsocketSession::default();
+    }
 }
 
 /// Parses per-turn metadata into an HTTP header value.

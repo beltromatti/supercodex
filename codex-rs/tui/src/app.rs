@@ -161,6 +161,7 @@ use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::mpsc::unbounded_channel;
 use tokio::task::JoinHandle;
 use toml::Value as TomlValue;
+use toml_edit::value;
 use uuid::Uuid;
 mod agent_navigation;
 mod app_server_adapter;
@@ -282,11 +283,19 @@ fn guardian_approvals_mode() -> GuardianApprovalsMode {
         sandbox_policy: SandboxPolicy::new_workspace_write_policy(),
     }
 }
+
+const OPENAI_PROVIDER_ID: &str = "openai";
+const QWEN_VLLM_PROVIDER_ID: &str = "qwen_vllm";
+const QWEN3_VL_AWQ_MODEL_SLUG: &str = "qwen3-vl-32b-instruct-awq";
 /// Baseline cadence for periodic stream commit animation ticks.
 ///
 /// Smooth-mode streaming drains one line per tick, so this interval controls
 /// perceived typing speed for non-backlogged output.
 const COMMIT_ANIMATION_TICK: Duration = tui::TARGET_FRAME_INTERVAL;
+
+fn should_reset_provider_to_openai(current_provider_id: &str, selected_model: &str) -> bool {
+    current_provider_id == QWEN_VLLM_PROVIDER_ID && selected_model != QWEN3_VL_AWQ_MODEL_SLUG
+}
 
 #[derive(Debug, Clone)]
 pub struct AppExitInfo {
@@ -1431,6 +1440,7 @@ impl App {
                 sandbox_policy_override,
                 /*windows_sandbox_level*/ None,
                 /*model*/ None,
+                /*provider_base_url*/ None,
                 /*effort*/ None,
                 /*summary*/ None,
                 /*service_tier*/ None,
@@ -5046,6 +5056,7 @@ impl App {
                                         #[cfg(target_os = "windows")]
                                         Some(windows_sandbox_level),
                                         /*model*/ None,
+                                        /*provider_base_url*/ None,
                                         /*effort*/ None,
                                         /*summary*/ None,
                                         /*service_tier*/ None,
@@ -5072,6 +5083,7 @@ impl App {
                                         #[cfg(target_os = "windows")]
                                         Some(windows_sandbox_level),
                                         /*model*/ None,
+                                        /*provider_base_url*/ None,
                                         /*effort*/ None,
                                         /*summary*/ None,
                                         /*service_tier*/ None,
@@ -5112,18 +5124,41 @@ impl App {
                 }
             }
             AppEvent::PersistModelSelection { model, effort } => {
-                let profile = self.active_profile.as_deref();
-                match ConfigEditsBuilder::new(&self.config.codex_home)
+                let active_profile = self.active_profile.clone();
+                let profile = active_profile.as_deref();
+                let reset_provider_to_openai =
+                    should_reset_provider_to_openai(&self.config.model_provider_id, &model);
+
+                let mut edits_builder = ConfigEditsBuilder::new(&self.config.codex_home)
                     .with_profile(profile)
-                    .set_model(Some(model.as_str()), effort)
-                    .apply()
-                    .await
+                    .set_model(Some(model.as_str()), effort);
+                if reset_provider_to_openai {
+                    edits_builder = edits_builder.with_edits([ConfigEdit::SetPath {
+                        segments: vec!["model_provider".to_string()],
+                        value: value(OPENAI_PROVIDER_ID),
+                    }]);
+                }
+
+                match edits_builder.apply().await
                 {
                     Ok(()) => {
                         let effort_label = effort
                             .map(|selected_effort| selected_effort.to_string())
                             .unwrap_or_else(|| "default".to_string());
                         tracing::info!("Selected model: {model}, Selected effort: {effort_label}");
+                        if reset_provider_to_openai {
+                            self.config.model_provider_id = OPENAI_PROVIDER_ID.to_string();
+                            if let Some(openai_provider) =
+                                self.config.model_providers.get(OPENAI_PROVIDER_ID).cloned()
+                            {
+                                self.config.model_provider = openai_provider;
+                            } else {
+                                tracing::warn!("openai provider missing from model_providers map");
+                            }
+                            self.refresh_status_line();
+                        }
+
+
                         let mut message = format!("Model changed to {model}");
                         if let Some(label) = Self::reasoning_label_for(&model, effort) {
                             message.push(' ');
@@ -5188,6 +5223,83 @@ impl App {
                     plugins = None;
                 }
                 self.chat_widget.on_plugin_mentions_loaded(plugins);
+            }
+            AppEvent::PersistQwenVllmProvider { base_url } => {
+                let provider_id = QWEN_VLLM_PROVIDER_ID;
+                self.config.model_provider_id = provider_id.to_string();
+                self.config.model_provider.name = "Qwen vLLM".to_string();
+                self.config.model_provider.base_url = Some(base_url.clone());
+                self.config.model_provider.env_key = None;
+                self.config.model_provider.env_key_instructions = None;
+                self.config.model_provider.experimental_bearer_token = None;
+                self.config.model_provider.requires_openai_auth = false;
+                self.config.model_provider.supports_websockets = false;
+                match ConfigEditsBuilder::new(&self.config.codex_home)
+                    .with_edits([
+                        ConfigEdit::SetPath {
+                            segments: vec!["model_provider".to_string()],
+                            value: value(provider_id),
+                        },
+                        ConfigEdit::SetPath {
+                            segments: vec![
+                                "model_providers".to_string(),
+                                provider_id.to_string(),
+                                "name".to_string(),
+                            ],
+                            value: value("Qwen vLLM"),
+                        },
+                        ConfigEdit::SetPath {
+                            segments: vec![
+                                "model_providers".to_string(),
+                                provider_id.to_string(),
+                                "base_url".to_string(),
+                            ],
+                            value: value(base_url.clone()),
+                        },
+                        ConfigEdit::SetPath {
+                            segments: vec![
+                                "model_providers".to_string(),
+                                provider_id.to_string(),
+                                "wire_api".to_string(),
+                            ],
+                            value: value("responses"),
+                        },
+                        ConfigEdit::SetPath {
+                            segments: vec![
+                                "model_providers".to_string(),
+                                provider_id.to_string(),
+                                "requires_openai_auth".to_string(),
+                            ],
+                            value: value(false),
+                        },
+                        ConfigEdit::SetPath {
+                            segments: vec![
+                                "model_providers".to_string(),
+                                provider_id.to_string(),
+                                "supports_websockets".to_string(),
+                            ],
+                            value: value(false),
+                        },
+                    ])
+                    .apply()
+                    .await
+                {
+                    Ok(()) => {
+                        self.chat_widget.add_info_message(
+                            format!("qwen_vllm provider saved with base URL {base_url}"),
+                            None,
+                        );
+                    }
+                    Err(err) => {
+                        tracing::error!(
+                            error = %err,
+                            "failed to persist qwen_vllm provider"
+                        );
+                        self.chat_widget.add_error_message(format!(
+                            "Failed to save qwen_vllm provider settings: {err}"
+                        ));
+                    }
+                }
             }
             AppEvent::PersistPersonalitySelection { personality } => {
                 let profile = self.active_profile.as_deref();
@@ -8267,6 +8379,7 @@ mod tests {
                 sandbox_policy: Some(guardian_approvals.sandbox_policy.clone()),
                 windows_sandbox_level: None,
                 model: None,
+                provider_base_url: None,
                 effort: None,
                 summary: None,
                 service_tier: None,
@@ -8358,6 +8471,7 @@ mod tests {
                 sandbox_policy: None,
                 windows_sandbox_level: None,
                 model: None,
+                provider_base_url: None,
                 effort: None,
                 summary: None,
                 service_tier: None,
@@ -8437,6 +8551,7 @@ mod tests {
                 sandbox_policy: Some(guardian_approvals.sandbox_policy.clone()),
                 windows_sandbox_level: None,
                 model: None,
+                provider_base_url: None,
                 effort: None,
                 summary: None,
                 service_tier: None,
@@ -8494,6 +8609,7 @@ mod tests {
                 sandbox_policy: None,
                 windows_sandbox_level: None,
                 model: None,
+                provider_base_url: None,
                 effort: None,
                 summary: None,
                 service_tier: None,
@@ -8553,6 +8669,7 @@ mod tests {
                 sandbox_policy: Some(guardian_approvals.sandbox_policy.clone()),
                 windows_sandbox_level: None,
                 model: None,
+                provider_base_url: None,
                 effort: None,
                 summary: None,
                 service_tier: None,
@@ -8640,6 +8757,7 @@ guardian_approval = true
                 sandbox_policy: None,
                 windows_sandbox_level: None,
                 model: None,
+                provider_base_url: None,
                 effort: None,
                 summary: None,
                 service_tier: None,
@@ -11459,5 +11577,26 @@ guardian_approval = true
             summary.resume_command,
             Some("codex resume my-session".to_string())
         );
+    }
+
+    #[test]
+    fn should_reset_provider_to_openai_when_leaving_qwen() {
+        assert!(super::should_reset_provider_to_openai(
+            "qwen_vllm",
+            "gpt-5-codex"
+        ));
+    }
+
+    #[test]
+    fn should_not_reset_provider_to_openai_for_qwen_model() {
+        assert!(!super::should_reset_provider_to_openai(
+            "qwen_vllm",
+            "qwen3-vl-32b-instruct-awq"
+        ));
+    }
+
+    #[test]
+    fn should_not_reset_provider_to_openai_for_non_qwen_provider() {
+        assert!(!super::should_reset_provider_to_openai("openai", "gpt-5-codex"));
     }
 }

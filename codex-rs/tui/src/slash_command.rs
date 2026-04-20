@@ -45,6 +45,13 @@ pub enum SlashCommand {
     Mcp,
     Apps,
     Plugins,
+    Accounts,
+    #[strum(serialize = "removeaccount")]
+    RemoveAccount,
+    #[strum(serialize = "addaccount")]
+    AddAccount,
+    #[strum(serialize = "swapaccount")]
+    SwapAccount,
     Logout,
     Quit,
     Exit,
@@ -114,6 +121,10 @@ impl SlashCommand {
             SlashCommand::Mcp => "list configured MCP tools",
             SlashCommand::Apps => "manage apps",
             SlashCommand::Plugins => "browse plugins",
+            SlashCommand::Accounts => "list saved ChatGPT accounts",
+            SlashCommand::RemoveAccount => "remove a saved ChatGPT account",
+            SlashCommand::AddAccount => "add a ChatGPT account",
+            SlashCommand::SwapAccount => "switch active ChatGPT account",
             SlashCommand::Logout => "log out of Codex",
             SlashCommand::Rollout => "print the rollout file path",
             SlashCommand::TestApproval => "test approval request",
@@ -160,6 +171,10 @@ impl SlashCommand {
             | SlashCommand::Review
             | SlashCommand::Plan
             | SlashCommand::Clear
+            | SlashCommand::Accounts
+            | SlashCommand::RemoveAccount
+            | SlashCommand::AddAccount
+            | SlashCommand::SwapAccount
             | SlashCommand::Logout
             | SlashCommand::MemoryDrop
             | SlashCommand::MemoryUpdate => false,

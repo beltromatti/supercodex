@@ -328,6 +328,11 @@ pub(crate) enum AppEvent {
         effort: Option<ReasoningEffort>,
     },
 
+    /// Persist the dedicated qwen-vLLM provider configuration.
+    PersistQwenVllmProvider {
+        base_url: String,
+    },
+
     /// Persist the selected personality to the appropriate config.
     PersistPersonalitySelection {
         personality: Personality,

@@ -16,6 +16,8 @@ use crate::agent::status::is_final;
 use crate::agent_identity::AgentIdentityManager;
 use crate::apps::render_apps_section;
 use crate::commit_attribution::commit_message_trailer_instruction;
+use codex_login::current_saved_chatgpt_account_id;
+use codex_login::rotate_to_next_saved_chatgpt_account;
 use crate::compact;
 use crate::compact::InitialContextInjection;
 use crate::compact::run_inline_auto_compact_task;
@@ -1300,6 +1302,9 @@ impl SessionConfiguration {
         if let Some(app_server_client_version) = updates.app_server_client_version.clone() {
             next_configuration.app_server_client_version = Some(app_server_client_version);
         }
+        if let Some(provider_base_url) = updates.provider_base_url.clone() {
+            next_configuration.provider.base_url = Some(provider_base_url);
+        }
         Ok(next_configuration)
     }
 }
@@ -1311,6 +1316,7 @@ pub(crate) struct SessionSettingsUpdate {
     pub(crate) approvals_reviewer: Option<ApprovalsReviewer>,
     pub(crate) sandbox_policy: Option<SandboxPolicy>,
     pub(crate) windows_sandbox_level: Option<WindowsSandboxLevel>,
+    pub(crate) provider_base_url: Option<String>,
     pub(crate) collaboration_mode: Option<CollaborationMode>,
     pub(crate) reasoning_summary: Option<ReasoningSummaryConfig>,
     pub(crate) service_tier: Option<Option<ServiceTier>>,
@@ -4732,6 +4738,7 @@ async fn submission_loop(sess: Arc<Session>, config: Arc<Config>, rx_sub: Receiv
                     sandbox_policy,
                     windows_sandbox_level,
                     model,
+                    provider_base_url,
                     effort,
                     summary,
                     service_tier,
@@ -4757,6 +4764,7 @@ async fn submission_loop(sess: Arc<Session>, config: Arc<Config>, rx_sub: Receiv
                             approvals_reviewer,
                             sandbox_policy,
                             windows_sandbox_level,
+                            provider_base_url,
                             collaboration_mode: Some(collaboration_mode),
                             reasoning_summary: summary,
                             service_tier,
@@ -5082,6 +5090,7 @@ mod handlers {
                         approvals_reviewer,
                         sandbox_policy: Some(sandbox_policy),
                         windows_sandbox_level: None,
+                        provider_base_url: None,
                         collaboration_mode,
                         reasoning_summary: summary,
                         service_tier,
@@ -7035,6 +7044,7 @@ async fn run_sampling_request(
         .await;
     let mut retries = 0;
     let mut initial_input = Some(input);
+    let mut exhausted_usage_limit_account_ids: HashSet<String> = HashSet::new();
     loop {
         let prompt_input = if let Some(input) = initial_input.take() {
             input
@@ -7074,7 +7084,98 @@ async fn run_sampling_request(
                 if let Some(rate_limits) = rate_limits {
                     sess.update_rate_limits(&turn_context, *rate_limits).await;
                 }
-                return Err(CodexErr::UsageLimitReached(e));
+                let Some(auth_manager) = turn_context.auth_manager.as_ref() else {
+                    return Err(CodexErr::UsageLimitReached(e));
+                };
+                if !auth_manager
+                    .auth_cached()
+                    .as_ref()
+                    .is_some_and(CodexAuth::is_chatgpt_auth)
+                {
+                    return Err(CodexErr::UsageLimitReached(e));
+                }
+
+                let codex_home = turn_context.config.codex_home.as_path();
+                let credentials_store_mode = turn_context.config.cli_auth_credentials_store_mode;
+                let mut current_account_id: Option<String> = None;
+                match current_saved_chatgpt_account_id(codex_home, credentials_store_mode) {
+                    Ok(Some(current_id)) => {
+                        exhausted_usage_limit_account_ids.insert(current_id.clone());
+                        current_account_id = Some(current_id);
+                    }
+                    Ok(None) => {}
+                    Err(err) => {
+                        warn!("failed to resolve current saved account id: {err}");
+                    }
+                }
+
+                sess.send_event(
+                    &turn_context,
+                    EventMsg::Warning(WarningEvent {
+                        message: match current_account_id {
+                            Some(account_id) => format!(
+                                "Usage limit reached for account {account_id}. Trying the next saved account."
+                            ),
+                            None => "Usage limit reached for the active account. Trying the next saved account."
+                                .to_string(),
+                        },
+                    }),
+                )
+                .await;
+
+                match rotate_to_next_saved_chatgpt_account(
+                    codex_home,
+                    credentials_store_mode,
+                    &exhausted_usage_limit_account_ids,
+                ) {
+                    Ok(Some(next_account)) => {
+                        warn!(
+                            "usage limit reached, switched account and retrying request: {}",
+                            next_account.label
+                        );
+                        sess.send_event(
+                            &turn_context,
+                            EventMsg::Warning(WarningEvent {
+                                message: format!(
+                                    "Switched account to {}. Retrying request.",
+                                    next_account.label
+                                ),
+                            }),
+                        )
+                        .await;
+                        auth_manager.reload();
+                        client_session.reset_websocket_state_for_auth_change();
+                        retries = 0;
+                        continue;
+                    }
+                    Ok(None) => {
+                        sess.send_event(
+                            &turn_context,
+                            EventMsg::Warning(WarningEvent {
+                                message:
+                                    "All saved accounts hit usage limits. Returning the provider error."
+                                        .to_string(),
+                            }),
+                        )
+                        .await;
+                        return Err(CodexErr::UsageLimitReached(e));
+                    }
+                    Err(switch_err) => {
+                        warn!(
+                            "failed to rotate saved account after usage limit error: {switch_err}"
+                        );
+                        sess.send_event(
+                            &turn_context,
+                            EventMsg::Warning(WarningEvent {
+                                message: format!(
+                                    "Failed to switch account after usage limit: {switch_err}",
+                                ),
+                            }),
+                        )
+                        .await;
+                        return Err(CodexErr::UsageLimitReached(e));
+                    }
+                }
             }
             Err(err) => err,
         };

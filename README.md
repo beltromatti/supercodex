@@ -50,6 +50,17 @@ Run `codex` and select **Sign in with ChatGPT**. We recommend signing into your 
 
 You can also use Codex with an API key, but this requires [additional setup](https://developers.openai.com/codex/auth#sign-in-with-an-api-key).
 
+## Codex Custom Additions
+
+For the customizations in this fork:
+- self-hosted NVIDIA-GPU inference setup (`vLLM` + `QuantTrio/Qwen3-VL-32B-Instruct-AWQ`)
+- multi-account ChatGPT auth management (`/accounts`, `/addaccount`, `/removeaccount`, `/swapaccount`)
+- automatic account rotation on usage-limit errors
+
+see:
+
+- [**CUSTOM.md**](./CUSTOM.md)
+
 ## Docs
 
 - [**Codex Documentation**](https://developers.openai.com/codex)

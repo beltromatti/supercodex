@@ -320,6 +320,18 @@ impl ChatWidget {
             SlashCommand::Plugins => {
                 self.add_plugins_output();
             }
+            SlashCommand::Accounts => {
+                self.open_accounts_list_popup();
+            }
+            SlashCommand::RemoveAccount => {
+                self.open_remove_account_popup();
+            }
+            SlashCommand::AddAccount => {
+                self.start_add_account_login();
+            }
+            SlashCommand::SwapAccount => {
+                self.open_swap_account_popup();
+            }
             SlashCommand::Rollout => {
                 if let Some(path) = self.rollout_path() {
                     self.add_info_message(

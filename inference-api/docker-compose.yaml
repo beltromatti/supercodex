@@ -1,0 +1,45 @@
+services:
+  qwen3-vl-awq-vllm:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: qwen3-vl-awq-vllm:latest
+    ports:
+      - "8000:8000"   # vLLM OpenAI-compatible API
+    environment:
+      # ---- Auth / HF ----
+      HUGGING_FACE_HUB_TOKEN: ${HUGGING_FACE_HUB_TOKEN}
+      HF_TOKEN: ${HF_TOKEN:-}
+
+      # ---- Public URL hinting (optional) ----
+      # If set, used to print the Codex-ready /v1 URL at startup.
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
+
+      # ---- vLLM tuning ----
+      GPU_MEMORY_UTILIZATION: ${GPU_MEMORY_UTILIZATION:-0.95}
+      KV_CACHE_DTYPE: ${KV_CACHE_DTYPE:-fp8}
+      ENABLE_KV_DTYPE_FALLBACK: ${ENABLE_KV_DTYPE_FALLBACK:-1}
+      MAX_NUM_SEQS: ${MAX_NUM_SEQS:-1}
+      MAX_MODEL_LEN: ${MAX_MODEL_LEN:-}
+      SWAP_SPACE_GB: ${SWAP_SPACE_GB:-16}
+      ENABLE_LOG_REQUESTS: ${ENABLE_LOG_REQUESTS:-0}
+      MM_PROCESSOR_CACHE_GB: ${MM_PROCESSOR_CACHE_GB:-0}
+      SKIP_MM_PROFILING: ${SKIP_MM_PROFILING:-1}
+      ENFORCE_MM_DEFAULT_LIMITS: ${ENFORCE_MM_DEFAULT_LIMITS:-1}
+      MM_DEFAULT_IMAGE_LIMIT: ${MM_DEFAULT_IMAGE_LIMIT:-1}
+      MM_DEFAULT_VIDEO_LIMIT: ${MM_DEFAULT_VIDEO_LIMIT:-0}
+      # JSON preferred by vLLM. Legacy image=1,video=0 is converted by start-vllm.sh.
+      LIMIT_MM_PER_PROMPT: ${LIMIT_MM_PER_PROMPT:-image=1,video=0}
+
+      # Vast UI helpers (harmless elsewhere; Vast reads these if you set them)
+      OPEN_BUTTON_PORT: ${OPEN_BUTTON_PORT:-8000}
+
+    volumes:
+      - ${HOME}/.cache/huggingface:/data/huggingface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

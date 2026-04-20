@@ -510,6 +510,13 @@ pub enum Op {
         #[serde(skip_serializing_if = "Option::is_none")]
         model: Option<String>,
 
+        /// Updated provider base URL for OpenAI-compatible endpoints.
+        ///
+        /// This is useful when switching to a self-hosted server (for example,
+        /// a local or remote vLLM endpoint) without restarting the session.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        provider_base_url: Option<String>,
+
         /// Updated reasoning effort (honored only for reasoning-capable models).
         ///
         /// Use `Some(Some(_))` to set a specific effort, `Some(None)` to clear
