@@ -1,5 +1,5 @@
 {
-  "name": "super-codex",
+  "name": "@beltromatti/super-codex",
   "version": "0.0.0-dev",
   "description": "Super Codex — an unofficial fork of OpenAI Codex with multi-account ChatGPT rotation and self-hosted Qwen3-VL support.",
   "license": "Apache-2.0",

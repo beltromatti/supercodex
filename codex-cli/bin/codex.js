@@ -64,7 +64,7 @@ const binaryPath = path.join(archRoot, "codex", binaryName);
 
 if (!existsSync(binaryPath)) {
   throw new Error(
-    `Super Codex binary is missing at ${binaryPath}. Reinstall with: npm install -g super-codex@latest`,
+    `Super Codex binary is missing at ${binaryPath}. Reinstall with: npm install -g @beltromatti/super-codex@latest`,
   );
 }
 

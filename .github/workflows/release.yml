@@ -232,7 +232,7 @@ jobs:
 
             Installable from npm:
             ```
-            npm install -g super-codex@${{ needs.prepare.outputs.version }}
+            npm install -g @beltromatti/super-codex@${{ needs.prepare.outputs.version }}
             ```
 
             Or download the archive for your platform below and run the
