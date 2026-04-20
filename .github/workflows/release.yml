@@ -3,7 +3,7 @@ name: release
 on:
   push:
     tags:
-      - "rust-v*.*.*"
+      - "super-v*.*.*"
 
 concurrency:
   group: release-${{ github.ref }}
@@ -32,7 +32,7 @@ jobs:
         run: |
           set -euo pipefail
           TAG="${GITHUB_REF_NAME}"
-          VERSION="${TAG#rust-v}"
+          VERSION="${TAG#super-v}"
           if [[ -z "${VERSION}" || "${VERSION}" == "${TAG}" ]]; then
             echo "could not parse semver from tag ${TAG}" >&2
             exit 1
