@@ -64,8 +64,19 @@ jobs:
           - target: x86_64-pc-windows-msvc
             runner: windows-latest
             binary: supercodex.exe
+    env:
+      # Use the git CLI for cargo git fetches — libgit2 chokes on Chromium's
+      # googlesource endpoint that libwebrtc pulls as a submodule on macOS.
+      CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+      CARGO_NET_RETRY: "10"
     steps:
       - uses: actions/checkout@v4
+
+      - name: Install Linux build deps (libcap-dev for codex-linux-sandbox)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libcap-dev pkg-config
 
       - name: Inject release version into Cargo workspace
         shell: bash
@@ -99,7 +110,19 @@ jobs:
       - name: Build (release)
         shell: bash
         working-directory: codex-rs
-        run: cargo build --release --locked --target ${{ matrix.target }} -p codex-cli
+        run: |
+          set -euo pipefail
+          # Retry up to 3 times to absorb transient Chromium/git flakiness
+          # (libwebrtc submodule fetch is the known-fragile path on macOS).
+          for attempt in 1 2 3; do
+            if cargo build --release --target ${{ matrix.target }} -p codex-cli; then
+              exit 0
+            fi
+            echo "::warning::cargo build attempt ${attempt} failed, retrying..."
+            sleep 10
+          done
+          echo "::error::cargo build failed after 3 attempts"
+          exit 1
 
       - name: Stage artifacts
         shell: bash
