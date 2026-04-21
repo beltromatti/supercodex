@@ -137,35 +137,39 @@ jobs:
             ls "codex-rs/target/${TARGET}/release" >&2 || true
             exit 1
           fi
-          STAGE="staging/${TARGET}"
+          mkdir -p staging
+          # Raw binary uploaded under the version-stamped name that the npm
+          # package's postinstall downloads directly from the GH Release.
+          if [[ "${TARGET}" == *windows* ]]; then
+            cp "${OUT}" "staging/supercodex-${VERSION}-${TARGET}.exe"
+          else
+            cp "${OUT}" "staging/supercodex-${VERSION}-${TARGET}"
+          fi
+          # Also bundle the same binary inside a tar/zip for people who prefer
+          # to download an archive instead of the raw executable.
+          STAGE="staging/archive-${TARGET}"
           mkdir -p "${STAGE}"
           cp "${OUT}" "${STAGE}/${BIN}"
           cd staging
           if [[ "${TARGET}" == *windows* ]]; then
-            7z a "supercodex-${VERSION}-${TARGET}.zip" "${TARGET}/${BIN}" >/dev/null
+            7z a "supercodex-${VERSION}-${TARGET}.zip" "archive-${TARGET}/${BIN}" >/dev/null
           else
-            tar -czf "supercodex-${VERSION}-${TARGET}.tar.gz" "${TARGET}/${BIN}"
+            tar -czf "supercodex-${VERSION}-${TARGET}.tar.gz" -C "archive-${TARGET}" "${BIN}"
           fi
+          rm -rf "archive-${TARGET}"
 
-      - name: Upload archive artifact
+      - name: Upload release assets
         uses: actions/upload-artifact@v4
         with:
           name: release-${{ matrix.target }}
-          path: staging/supercodex-${{ needs.prepare.outputs.version }}-${{ matrix.target }}.*
-          retention-days: 7
-
-      - name: Upload raw binary (for npm packaging)
-        uses: actions/upload-artifact@v4
-        with:
-          name: binary-${{ matrix.target }}
-          path: codex-rs/target/${{ matrix.target }}/release/${{ matrix.binary }}
+          path: staging/*
           retention-days: 7
 
   # ------------------------------------------------------------------------
-  # Publish a GitHub Release with all three platform archives, and publish
-  # the npm package with vendored binaries so `npm i -g super-codex`
-  # immediately lands a working `supercodex` command on any of the three
-  # supported platforms.
+  # Publish the GitHub Release first (so its assets are reachable), THEN
+  # publish the npm package. The npm package is small (no vendored binaries)
+  # — its postinstall script downloads the right platform binary from the
+  # GitHub Release that matches the package version.
   # ------------------------------------------------------------------------
   release:
     name: Publish GitHub Release + npm
@@ -179,50 +183,7 @@ jobs:
         with:
           path: downloaded
 
-      - name: Assemble npm package vendor tree
-        shell: bash
-        run: |
-          set -euo pipefail
-          VERSION="${{ needs.prepare.outputs.version }}"
-
-          # Stamp package.json with the release version.
-          python3 - <<PY
-          import json, pathlib
-          path = pathlib.Path("codex-cli/package.json")
-          data = json.loads(path.read_text())
-          data["version"] = "${VERSION}"
-          path.write_text(json.dumps(data, indent=2) + "\n")
-          PY
-
-          # Drop each platform binary into the vendor/ tree the launcher
-          # expects at runtime: vendor/<triple>/codex/supercodex[.exe]
-          for triple in aarch64-apple-darwin x86_64-unknown-linux-gnu x86_64-pc-windows-msvc; do
-            mkdir -p "codex-cli/vendor/${triple}/codex"
-          done
-
-          cp downloaded/binary-aarch64-apple-darwin/supercodex \
-             codex-cli/vendor/aarch64-apple-darwin/codex/supercodex
-          cp downloaded/binary-x86_64-unknown-linux-gnu/supercodex \
-             codex-cli/vendor/x86_64-unknown-linux-gnu/codex/supercodex
-          cp downloaded/binary-x86_64-pc-windows-msvc/supercodex.exe \
-             codex-cli/vendor/x86_64-pc-windows-msvc/codex/supercodex.exe
-
-          chmod +x codex-cli/vendor/aarch64-apple-darwin/codex/supercodex
-          chmod +x codex-cli/vendor/x86_64-unknown-linux-gnu/codex/supercodex
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          registry-url: "https://registry.npmjs.org"
-
-      - name: Publish to npm
-        working-directory: codex-cli
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish --access public
-
-      - name: Create GitHub Release with binary archives
+      - name: Create GitHub Release with binaries and archives
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
@@ -235,11 +196,36 @@ jobs:
             npm install -g @beltromatti/super-codex@${{ needs.prepare.outputs.version }}
             ```
 
-            Or download the archive for your platform below and run the
-            `supercodex` binary directly.
+            Or download the archive/binary for your platform below and run
+            the `supercodex` binary directly.
           files: |
             downloaded/release-aarch64-apple-darwin/*
             downloaded/release-x86_64-unknown-linux-gnu/*
             downloaded/release-x86_64-pc-windows-msvc/*
           draft: false
           prerelease: false
+
+      - name: Stamp npm package version
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.prepare.outputs.version }}"
+          python3 - <<PY
+          import json, pathlib
+          path = pathlib.Path("codex-cli/package.json")
+          data = json.loads(path.read_text())
+          data["version"] = "${VERSION}"
+          path.write_text(json.dumps(data, indent=2) + "\n")
+          PY
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Publish to npm
+        working-directory: codex-cli
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public

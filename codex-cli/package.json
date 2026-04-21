@@ -8,11 +8,14 @@
   },
   "type": "module",
   "engines": {
-    "node": ">=16"
+    "node": ">=18"
+  },
+  "scripts": {
+    "postinstall": "node scripts/install.mjs"
   },
   "files": [
     "bin",
-    "vendor"
+    "scripts"
   ],
   "repository": {
     "type": "git",
