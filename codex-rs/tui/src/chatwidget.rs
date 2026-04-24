@@ -3165,7 +3165,17 @@ impl ChatWidget {
     }
 
     fn on_warning(&mut self, message: impl Into<String>) {
-        self.add_to_history(history_cell::new_warning_event(message.into()));
+        let message = message.into();
+        // Super Codex: the core's UsageLimitReached auto-rotate path in
+        // run_sampling_request emits a Warning that starts with
+        // "Usage limit hit on this account; switched to" after it
+        // swaps auth.json. Catch that prefix and request a status
+        // refresh so the account line on the /status card reflects
+        // the new account without requiring a restart.
+        if message.starts_with("Usage limit hit on this account; switched to") {
+            self.app_event_tx.send(AppEvent::ReloadAuthRequested);
+        }
+        self.add_to_history(history_cell::new_warning_event(message));
         self.request_redraw();
     }
 

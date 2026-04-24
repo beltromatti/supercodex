@@ -173,6 +173,32 @@ switch reloads core's cache and not only the TUI's:
   let the TUI refresh the status card after a switch by re-reading
   from the same source of truth the app-server uses.
 
+**Status card refresh** — the `/status` Account line, the session
+info cell, and the connectors gating all read from
+`ChatWidget::status_account_display` / `plan_type` /
+`has_chatgpt_account`. Those fields are populated once at
+`AppServerBootstrap` and would otherwise stay pinned to the
+boot-time snapshot, so a user who switched mid-session would see
+"Account: old@..." in `/status` even though the next HTTP request
+already rides the new bearer. `App::refresh_status_account_from_server`
+in [`codex-rs/tui/src/app/account_management.rs`](codex-rs/tui/src/app/account_management.rs)
+re-runs the `read_account` RPC (same one `bootstrap` uses), maps
+the response through `AppServerSession::read_status_account_state`,
+and pushes the result into the chat widget via
+`ChatWidget::update_account_state`. It is called from:
+
+- `handle_switch_chatgpt_account` after a successful `/accounts`
+  switch;
+- `handle_reload_auth` after `/addaccount`;
+- `handle_remove_chatgpt_account` after the
+  remove-then-auto-rotate path swaps in the next saved account;
+- indirectly for the in-core auto-rotation: `ChatWidget::on_warning`
+  in [`codex-rs/tui/src/chatwidget.rs`](codex-rs/tui/src/chatwidget.rs)
+  detects the `"Usage limit hit on this account; switched to"`
+  warning the core's `run_sampling_request` emits after an
+  auto-rotate and schedules an `AppEvent::ReloadAuthRequested`,
+  which reaches the same handler chain.
+
 Why **not** a new RPC: the 0.121 app-server dispatch (`ClientRequest`
 enum in
 [`codex-rs/app-server-protocol/`](codex-rs/app-server-protocol/))

@@ -218,6 +218,34 @@ impl AppServerSession {
         self.client.auth_manager()
     }
 
+    /// Super Codex: re-read the active account from the app-server
+    /// (same RPC `bootstrap` uses) and project it into the fields the
+    /// status card / header strip render. Called after every
+    /// account-changing TUI handler so the status view reflects reality
+    /// instead of the boot-time snapshot.
+    pub(crate) async fn read_status_account_state(
+        &mut self,
+    ) -> Result<(
+        Option<StatusAccountDisplay>,
+        Option<codex_protocol::account::PlanType>,
+        bool,
+    )> {
+        let response = self.read_account().await?;
+        let (display, plan_type, has_chatgpt) = match response.account {
+            Some(Account::ApiKey {}) => (Some(StatusAccountDisplay::ApiKey), None, false),
+            Some(Account::Chatgpt { email, plan_type }) => (
+                Some(StatusAccountDisplay::ChatGpt {
+                    email: Some(email),
+                    plan: Some(plan_type_display_name(plan_type)),
+                }),
+                Some(plan_type),
+                true,
+            ),
+            None => (None, None, false),
+        };
+        Ok((display, plan_type, has_chatgpt))
+    }
+
     pub(crate) async fn bootstrap(&mut self, config: &Config) -> Result<AppServerBootstrap> {
         let account = self.read_account().await?;
         let model_request_id = self.next_request_id();

@@ -47,9 +47,14 @@ pub enum SlashCommand {
     Apps,
     Plugins,
     Logout,
-    // Super Codex: multi-account management.
+    // Super Codex: multi-account management. Explicit serializations
+    // keep the historical `/addaccount` and `/removeaccount` spellings
+    // (one word, no hyphen) instead of the kebab-case the `strum`
+    // macro would produce by default.
     Accounts,
+    #[strum(serialize = "addaccount")]
     AddAccount,
+    #[strum(serialize = "removeaccount")]
     RemoveAccount,
     Quit,
     Exit,

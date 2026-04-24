@@ -12,6 +12,29 @@
 use super::*;
 
 impl App {
+    /// Super Codex: re-read the active account from the app-server and
+    /// push it into the chat widget so the `/status` card, the session
+    /// info, and any connector gating reflect the current `auth.json`
+    /// instead of the boot-time snapshot. Silently no-op in remote
+    /// app-server mode (the refresh is a UX nicety, not correctness
+    /// critical).
+    pub(super) async fn refresh_status_account_from_server(
+        &mut self,
+        app_server: &mut AppServerSession,
+    ) {
+        match app_server.read_status_account_state().await {
+            Ok((display, plan_type, has_chatgpt)) => {
+                self.chat_widget
+                    .update_account_state(display, plan_type, has_chatgpt);
+            }
+            Err(err) => {
+                tracing::warn!(
+                    "Super Codex: failed to refresh account status after auth change: {err}"
+                );
+            }
+        }
+    }
+
     /// Super Codex: handle `/accounts` switch-to-saved by driving the
     /// shared AuthManager directly.
     pub(super) async fn handle_switch_chatgpt_account(
@@ -39,6 +62,7 @@ impl App {
             Ok(saved) => {
                 self.chat_widget
                     .add_info_message(format!("Switched to {}.", saved.label), /*hint*/ None);
+                self.refresh_status_account_from_server(app_server).await;
             }
             Err(err) => {
                 if err.kind() == std::io::ErrorKind::NotFound {
@@ -69,6 +93,7 @@ impl App {
             changed,
             "Super Codex: AuthManager reloaded after /addaccount"
         );
+        self.refresh_status_account_from_server(app_server).await;
     }
 
     /// Super Codex: handle `/removeaccount` end-to-end. Deletes the
@@ -165,6 +190,7 @@ impl App {
                     format!("Removed {label}. Switched to {}.", saved.label),
                     /*hint*/ None,
                 );
+                self.refresh_status_account_from_server(app_server).await;
             }
             Err(err) => {
                 self.chat_widget.add_error_message(format!(
