@@ -265,6 +265,7 @@ pub(super) async fn make_chatwidget_manual(
         interrupted_turn_notice_mode: InterruptedTurnNoticeMode::Default,
         frame_requester: FrameRequester::test_dummy(),
         show_welcome_banner: true,
+        super_codex_splash_shown: false,
         startup_tooltip_override: None,
         queued_user_messages: VecDeque::new(),
         user_turn_pending_start: false,

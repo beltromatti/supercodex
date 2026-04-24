@@ -954,6 +954,62 @@ impl App {
                     }
                 }
             }
+            AppEvent::PersistQwenVllmProvider { base_url } => {
+                // Super Codex: write a `[model_providers.qwen_vllm]` block to
+                // config.toml the first time the user points /model at a Qwen
+                // vLLM endpoint, so future launches pick up the provider
+                // without re-prompting. The entry is a Responses-compatible
+                // OpenAI provider overlay with no auth (vLLM typically runs
+                // unauthenticated).
+                let config_toml_path = self.config.codex_home.join("config.toml");
+                let update = |contents: String| -> String {
+                    let block = format!(
+                        "\n[model_providers.qwen_vllm]\n\
+name = \"Qwen vLLM\"\n\
+base_url = \"{base_url}\"\n\
+wire_api = \"responses\"\n\
+requires_openai_auth = false\n"
+                    );
+                    if contents.contains("[model_providers.qwen_vllm]") {
+                        // Replace the existing qwen_vllm block by swapping
+                        // the whole file. Keep it simple: just rewrite.
+                        let mut out = String::new();
+                        let mut in_block = false;
+                        for line in contents.lines() {
+                            if line.trim_start().starts_with("[model_providers.qwen_vllm]") {
+                                in_block = true;
+                                continue;
+                            }
+                            if in_block && line.trim_start().starts_with('[') {
+                                in_block = false;
+                            }
+                            if !in_block {
+                                out.push_str(line);
+                                out.push('\n');
+                            }
+                        }
+                        out.push_str(&block);
+                        out
+                    } else {
+                        format!("{contents}{block}")
+                    }
+                };
+                let existing = tokio::fs::read_to_string(&config_toml_path)
+                    .await
+                    .unwrap_or_default();
+                let next = update(existing);
+                if let Err(err) = tokio::fs::write(&config_toml_path, next).await {
+                    tracing::warn!(error = %err, "failed to persist qwen_vllm provider");
+                    self.chat_widget.add_error_message(format!(
+                        "Failed to save Qwen vLLM provider in config.toml: {err}"
+                    ));
+                } else {
+                    self.chat_widget.add_info_message(
+                        format!("Saved Qwen vLLM provider at {base_url}. It will be used on future launches."),
+                        /*hint*/ None,
+                    );
+                }
+            }
             AppEvent::PluginUninstallLoaded {
                 cwd,
                 plugin_id: _plugin_id,

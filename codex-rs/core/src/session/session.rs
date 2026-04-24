@@ -222,6 +222,18 @@ impl SessionConfiguration {
         if let Some(app_server_client_version) = updates.app_server_client_version.clone() {
             next_configuration.app_server_client_version = Some(app_server_client_version);
         }
+        // Super Codex: mid-session override of the active provider's
+        // base URL. Used by the `/model` Qwen picker to re-route
+        // requests to a user-supplied self-hosted vLLM endpoint
+        // without restarting the session. A fresh `ModelProviderInfo`
+        // is cloned from the current provider with only `base_url`
+        // replaced, so every other provider setting (auth, wire API,
+        // retries, ...) stays intact.
+        if let Some(base_url) = updates.provider_base_url.clone() {
+            let mut next_provider = next_configuration.provider.clone();
+            next_provider.base_url = Some(base_url);
+            next_configuration.provider = next_provider;
+        }
         Ok(next_configuration)
     }
 }
@@ -241,6 +253,12 @@ pub(crate) struct SessionSettingsUpdate {
     pub(crate) personality: Option<Personality>,
     pub(crate) app_server_client_name: Option<String>,
     pub(crate) app_server_client_version: Option<String>,
+    /// Super Codex: optional mid-session override of the active model
+    /// provider's `base_url`. Consumed by `SessionConfiguration::apply`
+    /// when present so the running session reroutes to a user-supplied
+    /// self-hosted endpoint (e.g. a vLLM serving Qwen3-VL) without a
+    /// TUI restart.
+    pub(crate) provider_base_url: Option<String>,
 }
 
 pub(crate) struct AppServerClientMetadata {

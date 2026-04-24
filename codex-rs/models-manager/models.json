@@ -406,6 +406,44 @@
       "supports_search_tool": true,
       "additional_speed_tiers": [],
       "supports_reasoning_summaries": true
+    },
+    {
+      "support_verbosity": false,
+      "default_verbosity": null,
+      "apply_patch_tool_type": null,
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "supports_image_detail_original": false,
+      "truncation_policy": {
+        "mode": "bytes",
+        "limit": 10000
+      },
+      "supports_parallel_tool_calls": false,
+      "context_window": 57344,
+      "effective_context_window_percent": 95,
+      "default_reasoning_summary": "auto",
+      "slug": "qwen3-vl-32b-instruct-awq",
+      "display_name": "Qwen3-VL-32B-Instruct-AWQ",
+      "description": "Self-hosted Qwen3-VL AWQ 4-bit via vLLM (32GB-friendly).",
+      "default_reasoning_level": "none",
+      "supported_reasoning_levels": [
+        {
+          "effort": "none",
+          "description": "Use provider defaults (no reasoning override)."
+        }
+      ],
+      "shell_type": "default",
+      "visibility": "list",
+      "supported_in_api": true,
+      "availability_nux": null,
+      "upgrade": null,
+      "priority": 99,
+      "base_instructions": "",
+      "model_messages": null,
+      "experimental_supported_tools": [],
+      "supports_reasoning_summaries": false
     }
   ]
 }

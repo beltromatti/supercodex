@@ -173,6 +173,7 @@ impl AppCommand {
         sandbox_policy: Option<SandboxPolicy>,
         windows_sandbox_level: Option<WindowsSandboxLevel>,
         model: Option<String>,
+        provider_base_url: Option<String>,
         effort: Option<Option<ReasoningEffortConfig>>,
         summary: Option<ReasoningSummaryConfig>,
         service_tier: Option<Option<ServiceTier>>,
@@ -187,6 +188,7 @@ impl AppCommand {
             permission_profile: None,
             windows_sandbox_level,
             model,
+            provider_base_url,
             effort,
             summary,
             service_tier,
@@ -321,6 +323,11 @@ impl AppCommand {
                 permission_profile: _,
                 windows_sandbox_level,
                 model,
+                // Super Codex: the base-url override is operational
+                // state consumed by `SessionConfiguration::apply`, not
+                // a view-layer concern — ignore it in the projection
+                // the TUI uses to dispatch this op.
+                provider_base_url: _,
                 effort,
                 summary,
                 service_tier,

@@ -253,6 +253,10 @@ use tracing::debug;
 use tracing::warn;
 
 const DEFAULT_MODEL_DISPLAY_NAME: &str = "loading";
+/// Super Codex: slug of the self-hosted Qwen3-VL AWQ model; picking it
+/// from `/model` opens the vLLM URL prompt instead of switching directly.
+const QWEN3_VL_AWQ_MODEL_SLUG: &str = "qwen3-vl-32b-instruct-awq";
+const VLLM_SERVER_PROMPT_PLACEHOLDER: &str = "https://YOUR-RUNPOD-ENDPOINT/v1";
 const MULTI_AGENT_ENABLE_TITLE: &str = "Enable subagents?";
 const MULTI_AGENT_ENABLE_YES: &str = "Yes, enable";
 const MULTI_AGENT_ENABLE_NO: &str = "Not now";
@@ -8005,6 +8009,7 @@ impl ChatWidget {
                     /*sandbox_policy*/ None,
                     /*windows_sandbox_level*/ None,
                     Some(switch_model_for_events.clone()),
+                    /*provider_base_url*/ None,
                     Some(Some(default_effort)),
                     /*summary*/ None,
                     /*service_tier*/ None,
@@ -8229,6 +8234,7 @@ impl ChatWidget {
                             /*sandbox_policy*/ None,
                             /*windows_sandbox_level*/ None,
                             /*model*/ None,
+                            /*provider_base_url*/ None,
                             /*effort*/ None,
                             /*summary*/ None,
                             /*service_tier*/ None,
@@ -8964,10 +8970,97 @@ impl ChatWidget {
             .send(AppEvent::UpdateReasoningEffort(effort));
     }
 
-    fn apply_model_and_effort(&self, model: String, effort: Option<ReasoningEffortConfig>) {
+    fn apply_model_and_effort(&mut self, model: String, effort: Option<ReasoningEffortConfig>) {
+        // Super Codex: the Qwen3-VL AWQ slug is a self-hosted model.
+        // Intercept the picker and ask the user for the vLLM server URL
+        // first; the prompt callback will then drive the override, the
+        // model swap, and the per-project `[model_providers.qwen_vllm]`
+        // persistence in `config.toml`.
+        if model == QWEN3_VL_AWQ_MODEL_SLUG {
+            self.open_vllm_server_prompt_for_model(model, effort);
+            return;
+        }
         self.apply_model_and_effort_without_persist(model.clone(), effort);
         self.app_event_tx
             .send(AppEvent::PersistModelSelection { model, effort });
+    }
+
+    /// Super Codex: normalise a user-supplied vLLM URL to an
+    /// OpenAI-compatible `/v1` base URL. Rejects empty / non-http(s)
+    /// input; auto-appends `/v1` when missing.
+    fn normalize_openai_compatible_base_url(raw: &str) -> Option<String> {
+        let trimmed = raw.trim().trim_end_matches('/');
+        if trimmed.is_empty() {
+            return None;
+        }
+        if !trimmed.starts_with("http://") && !trimmed.starts_with("https://") {
+            return None;
+        }
+        if trimmed.ends_with("/v1") {
+            Some(trimmed.to_string())
+        } else {
+            Some(format!("{trimmed}/v1"))
+        }
+    }
+
+    /// Super Codex: opens a one-shot prompt asking for the user's vLLM
+    /// server URL before switching to the Qwen model. Dispatches an
+    /// `Op::OverrideTurnContext` with `provider_base_url` so the live
+    /// session reroutes without a TUI restart, plus a
+    /// `PersistQwenVllmProvider` event so subsequent launches don't
+    /// re-prompt.
+    fn open_vllm_server_prompt_for_model(
+        &mut self,
+        model: String,
+        effort: Option<ReasoningEffortConfig>,
+    ) {
+        let tx = self.app_event_tx.clone();
+        let view = CustomPromptView::new(
+            "Qwen vLLM server".to_string(),
+            VLLM_SERVER_PROMPT_PLACEHOLDER.to_string(),
+            /*initial_text*/ String::new(),
+            Some("Enter the public OpenAI-compatible server URL".to_string()),
+            Box::new(move |base_url: String| {
+                let Some(normalized_base_url) =
+                    Self::normalize_openai_compatible_base_url(base_url.as_str())
+                else {
+                    tx.send(AppEvent::InsertHistoryCell(Box::new(
+                        history_cell::new_error_event(
+                            "Invalid URL. Use http(s)://... and include /v1 (or it will be appended)."
+                                .to_string(),
+                        ),
+                    )));
+                    return;
+                };
+
+                tx.send(AppEvent::CodexOp(Op::OverrideTurnContext {
+                    cwd: None,
+                    approval_policy: None,
+                    approvals_reviewer: None,
+                    sandbox_policy: None,
+                    permission_profile: None,
+                    windows_sandbox_level: None,
+                    model: Some(model.clone()),
+                    provider_base_url: Some(normalized_base_url.clone()),
+                    effort: Some(effort),
+                    summary: None,
+                    service_tier: None,
+                    collaboration_mode: None,
+                    personality: None,
+                }));
+                tx.send(AppEvent::UpdateModel(model.clone()));
+                tx.send(AppEvent::UpdateReasoningEffort(effort));
+                tx.send(AppEvent::PersistModelSelection {
+                    model: model.clone(),
+                    effort,
+                });
+                tx.send(AppEvent::PersistQwenVllmProvider {
+                    base_url: normalized_base_url,
+                });
+            }),
+        );
+
+        self.bottom_pane.show_view(Box::new(view));
     }
 
     /// Open the permissions popup (alias for /permissions).
@@ -9216,6 +9309,7 @@ impl ChatWidget {
                     Some(sandbox_clone.clone()),
                     /*windows_sandbox_level*/ None,
                     /*model*/ None,
+                    /*provider_base_url*/ None,
                     /*effort*/ None,
                     /*summary*/ None,
                     /*service_tier*/ None,
@@ -10037,6 +10131,7 @@ impl ChatWidget {
                 /*sandbox_policy*/ None,
                 /*windows_sandbox_level*/ None,
                 /*model*/ None,
+                /*provider_base_url*/ None,
                 /*effort*/ None,
                 /*summary*/ None,
                 Some(service_tier),

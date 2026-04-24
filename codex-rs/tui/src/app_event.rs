@@ -387,6 +387,12 @@ pub(crate) enum AppEvent {
         effort: Option<ReasoningEffort>,
     },
 
+    /// Super Codex: persist the user-supplied vLLM server URL for the
+    /// Qwen model picker so subsequent TUI launches don't re-prompt.
+    PersistQwenVllmProvider {
+        base_url: String,
+    },
+
     /// Persist the selected personality to the appropriate config.
     PersistPersonalitySelection {
         personality: Personality,

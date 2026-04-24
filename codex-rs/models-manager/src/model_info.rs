@@ -19,6 +19,8 @@ const LOCAL_FRIENDLY_TEMPLATE: &str =
     "You optimize for team morale and being a supportive teammate as much as code quality.";
 const LOCAL_PRAGMATIC_TEMPLATE: &str = "You are a deeply pragmatic, effective software engineer.";
 const PERSONALITY_PLACEHOLDER: &str = "{{ personality }}";
+const QWEN3_VL_AWQ_MODEL_SLUG: &str = "qwen3-vl-32b-instruct-awq";
+const QWEN3_VL_AWQ_CONTEXT_WINDOW: i64 = 57_344;
 
 pub fn with_config_overrides(mut model: ModelInfo, config: &ModelsManagerConfig) -> ModelInfo {
     if let Some(supports_reasoning_summaries) = config.model_supports_reasoning_summaries
@@ -65,10 +67,27 @@ pub fn with_config_overrides(mut model: ModelInfo, config: &ModelsManagerConfig)
 /// Build a minimal fallback model descriptor for missing/unknown slugs.
 pub fn model_info_from_slug(slug: &str) -> ModelInfo {
     warn!("Unknown model {slug} is used. This will use fallback model metadata.");
+    // Super Codex: the self-hosted Qwen3-VL AWQ deployment does not ship
+    // in the upstream `models.json` catalog, so a manual picker / config
+    // reference can still land here. Return a hand-built descriptor with
+    // the real display name + context window instead of the generic
+    // 272k-token fallback.
+    let (display_name, description, context_window) = if slug == QWEN3_VL_AWQ_MODEL_SLUG {
+        (
+            "Qwen3-VL-32B-Instruct-AWQ".to_string(),
+            Some(
+                "Self-hosted Qwen3-VL AWQ 4-bit via vLLM with a 57k safe context target."
+                    .to_string(),
+            ),
+            Some(QWEN3_VL_AWQ_CONTEXT_WINDOW),
+        )
+    } else {
+        (slug.to_string(), None, Some(272_000))
+    };
     ModelInfo {
         slug: slug.to_string(),
-        display_name: slug.to_string(),
-        description: None,
+        display_name,
+        description,
         default_reasoning_level: None,
         supported_reasoning_levels: Vec::new(),
         shell_type: ConfigShellToolType::Default,
@@ -89,8 +108,8 @@ pub fn model_info_from_slug(slug: &str) -> ModelInfo {
         truncation_policy: TruncationPolicyConfig::bytes(/*limit*/ 10_000),
         supports_parallel_tool_calls: false,
         supports_image_detail_original: false,
-        context_window: Some(272_000),
-        max_context_window: Some(272_000),
+        context_window,
+        max_context_window: context_window,
         auto_compact_token_limit: None,
         effective_context_window_percent: 95,
         experimental_supported_tools: Vec::new(),

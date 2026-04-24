@@ -619,6 +619,15 @@ pub enum Op {
         #[serde(skip_serializing_if = "Option::is_none")]
         model: Option<String>,
 
+        /// Super Codex: optional override of the active model provider's
+        /// `base_url`. When `Some(..)` the running session starts
+        /// routing requests to the given endpoint without requiring a
+        /// TUI restart. Used by the `/model` Qwen picker to point the
+        /// session at a user-provided self-hosted vLLM instance. `None`
+        /// leaves the configured provider URL untouched.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        provider_base_url: Option<String>,
+
         /// Updated reasoning effort (honored only for reasoning-capable models).
         ///
         /// Use `Some(Some(_))` to set a specific effort, `Some(None)` to clear

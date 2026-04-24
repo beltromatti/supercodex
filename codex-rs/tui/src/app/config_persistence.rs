@@ -325,6 +325,7 @@ impl App {
                 sandbox_policy_override,
                 /*windows_sandbox_level*/ None,
                 /*model*/ None,
+                /*provider_base_url*/ None,
                 /*effort*/ None,
                 /*summary*/ None,
                 /*service_tier*/ None,

@@ -171,6 +171,7 @@ pub(super) async fn user_input_or_turn_inner(
                     personality,
                     app_server_client_name: None,
                     app_server_client_version: None,
+                    provider_base_url: None,
                 },
                 None,
                 environments,
@@ -221,6 +222,7 @@ pub(super) async fn user_input_or_turn_inner(
                     personality,
                     app_server_client_name: None,
                     app_server_client_version: None,
+                    provider_base_url: None,
                 },
                 responsesapi_client_metadata,
                 environments,
@@ -1116,6 +1118,7 @@ pub(super) async fn submission_loop(
                     permission_profile,
                     windows_sandbox_level,
                     model,
+                    provider_base_url,
                     effort,
                     summary,
                     service_tier,
@@ -1146,6 +1149,7 @@ pub(super) async fn submission_loop(
                             reasoning_summary: summary,
                             service_tier,
                             personality,
+                            provider_base_url,
                             ..Default::default()
                         },
                     )
