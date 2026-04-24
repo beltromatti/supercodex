@@ -16,8 +16,17 @@ the fork end-to-end. For the high-level vision and disclaimer, see
 
 - **Upstream**: [openai/codex](https://github.com/openai/codex),
   Apache-2.0.
-- **Base tag** for the current Super Codex line: `rust-v0.121.0`
-  (upstream, 2026-04-15).
+- **Base tag** for the current Super Codex line: `rust-v0.124.0`
+  (upstream). Previous base was `rust-v0.121.0`; the 0.121 → 0.124
+  rebase integrated 325 upstream commits and touched 49 files that
+  Super Codex also owns (Op enum layout, auth manager lock type
+  semaphore → mutex migration, session/* refactor splitting the
+  old codex.rs into turn.rs + handlers.rs + session.rs, TUI app/
+  submodule split, new collaboration-modes / permission-profile /
+  model-catalog / stream-controller scaffolds). Every fork
+  feature was re-ported on top of the new layout with
+  `cargo check --workspace --all-targets` clean and all account-
+  registry regression tests green.
 - **Super Codex tag**: `super-vX.Y.Z`, with `X.Y.Z` **strictly 1:1**
   with the upstream stable (`rust-vX.Y.Z`) the fork is currently
   rebased onto. Fork-only fixes (multi-account tweaks, branding
@@ -71,7 +80,7 @@ automatic rotation when the active account hits a usage limit.
   registry can gate on ChatGPT-vs-ApiKey auth.
 
 **Auto-rotation on `UsageLimitReached`** —
-[`codex-rs/core/src/codex.rs::run_sampling_request`](codex-rs/core/src/codex.rs):
+[`codex-rs/core/src/session/turn.rs::run_sampling_request`](codex-rs/core/src/session/turn.rs):
 
 - Tracks the set of exhausted account ids for the current turn in a
   per-loop `HashSet<String>`.
@@ -83,7 +92,8 @@ automatic rotation when the active account hits a usage limit.
      which picks the next saved account not already exhausted,
      rewrites `$CODEX_HOME/auth.json`, and refreshes the cached auth
      under the refresh lock.
-  3. Calls `client_session.reset_websocket_state_for_auth_change()`
+  3. Calls `client_session.reset_websocket_session()` (the 0.124
+     successor to the removed `reset_websocket_state_for_auth_change`)
      so the retry reconnects with fresh auth headers on WebSocket
      transport.
   4. Resets `retries = 0` and `continue`s the loop — the current
@@ -275,7 +285,7 @@ serves `QuantTrio/Qwen3-VL-32B-Instruct-AWQ`.
 - New field added to
   [`Op::OverrideTurnContext`](codex-rs/protocol/src/protocol.rs),
   `SessionSettingsUpdate` in
-  [`codex-rs/core/src/codex.rs`](codex-rs/core/src/codex.rs),
+  [`codex-rs/core/src/session/session.rs`](codex-rs/core/src/session/session.rs),
   and the TUI-side `AppCommand::override_turn_context` helper in
   [`codex-rs/tui/src/app_command.rs`](codex-rs/tui/src/app_command.rs).
 - Applied in `SessionConfiguration::apply` so mid-session the provider
