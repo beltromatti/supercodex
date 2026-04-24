@@ -1,30 +1,21 @@
-# https://docs.github.com/en/code-security/dependabot/working-with-dependabot/dependabot-options-reference#package-ecosystem-
-
+# https://docs.github.com/en/code-security/dependabot/working-with-dependabot/dependabot-options-reference
+#
+# Super Codex re-merges from openai/codex on every upstream stable release,
+# so Rust/Docker/devcontainer dependency bumps already arrive through that
+# channel. Running Dependabot on those ecosystems here would only create
+# conflicts against the next `git rebase openai/main`.
+#
+# The one ecosystem that IS ours to maintain is the GitHub Actions pinned
+# inside .github/workflows/release.yml: those versions are not covered by
+# upstream, and Dependabot is the cleanest way to keep them current and
+# patched for security advisories.
 version: 2
 updates:
-  - package-ecosystem: bun
-    directory: .github/actions/codex
-    schedule:
-      interval: weekly
-  - package-ecosystem: cargo
-    directories:
-      - codex-rs
-      - codex-rs/*
-    schedule:
-      interval: weekly
-  - package-ecosystem: devcontainers
-    directory: /
-    schedule:
-      interval: weekly
-  - package-ecosystem: docker
-    directory: codex-cli
-    schedule:
-      interval: weekly
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
-  - package-ecosystem: rust-toolchain
-    directory: codex-rs
-    schedule:
-      interval: weekly
+    commit-message:
+      prefix: ci
+    labels:
+      - dependencies

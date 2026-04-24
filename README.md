@@ -1,60 +1,122 @@
-<p align="center"><code>npm i -g @openai/codex</code><br />or <code>brew install --cask codex</code></p>
-<p align="center"><strong>Codex CLI</strong> is a coding agent from OpenAI that runs locally on your computer.
-<p align="center">
-  <img src="https://github.com/openai/codex/blob/main/.github/codex-cli-splash.png" alt="Codex CLI splash" width="80%" />
-</p>
-</br>
-If you want Codex in your code editor (VS Code, Cursor, Windsurf), <a href="https://developers.openai.com/codex/ide">install in your IDE.</a>
-</br>If you want the desktop app experience, run <code>codex app</code> or visit <a href="https://chatgpt.com/codex?app-landing-page=true">the Codex App page</a>.
-</br>If you are looking for the <em>cloud-based agent</em> from OpenAI, <strong>Codex Web</strong>, go to <a href="https://chatgpt.com/codex">chatgpt.com/codex</a>.</p>
+<div align="center">
+
+<img src=".github/super-codex-banner.svg" alt="Super Codex" width="100%" />
+
+<br />
+
+[![Unofficial fork](https://img.shields.io/badge/status-unofficial%20fork-7c3aed?style=for-the-badge)](#disclaimer)
+[![Upstream](https://img.shields.io/badge/upstream-openai%2Fcodex-0f172a?style=for-the-badge)](https://github.com/openai/codex)
+[![License](https://img.shields.io/badge/license-Apache%202.0-2563eb?style=for-the-badge)](LICENSE)
+[![Built with Rust](https://img.shields.io/badge/built%20with-Rust-c75c2e?style=for-the-badge&logo=rust&logoColor=white)](https://www.rust-lang.org)
+
+<br />
+
+**Super Codex is an unofficial, community-driven fork of [OpenAI Codex](https://github.com/openai/codex)**
+that bends a great coding agent around the way people actually work.
+
+</div>
 
 ---
 
-## Quickstart
+## Vision
 
-### Installing and running Codex CLI
+Codex is a brilliant coding companion — but it was shaped for a very specific user: one account, one model family, one provider. Super Codex is about **breaking that shape open** without losing what makes Codex good.
 
-Install globally with your preferred package manager:
+The goal is simple: **let the agent fit the developer, not the other way around.**
 
-```shell
-# Install using npm
-npm install -g @openai/codex
+- People with more than one ChatGPT plan shouldn't have to juggle logins.
+- People who run their own hardware shouldn't be locked to a remote API.
+- People who hit usage limits mid-task shouldn't lose their flow.
+
+Super Codex is an experiment in making the agent quietly serve the user — from the first prompt to the last token.
+
+---
+
+## What's different
+
+<table>
+<tr>
+<td width="50%" valign="top">
+
+### Multi-account ChatGPT
+
+Save every ChatGPT account you've got and hop between them in a single slash command. `/accounts` shows the list; pick one with ↑/↓ + Enter to switch live, no restart. When one account hits its usage ceiling, Super Codex will **auto-rotate** to the next saved account mid-turn — no reset, no interruption, no lost context.
+
+</td>
+<td width="50%" valign="top">
+
+### Bring your own model
+
+Run Codex against your own self-hosted inference server. **Qwen3-VL-32B-Instruct-AWQ** is wired in out of the box — 4-bit quantised, comfortable on a single 32 GB GPU — and the TUI prompts for the server URL at swap time.
+
+</td>
+</tr>
+</table>
+
+Everything else — installation, sign-in, slash commands, IDE extensions, the desktop app, configuration, approvals, sandboxes — works exactly as it does in the upstream project.
+
+---
+
+## Everything else
+
+Super Codex is a **fork, not a rewrite.** For installation, quickstart, configuration, the full slash-command reference, the sign-in flow, IDE extensions, the desktop app, and anything else not mentioned above, refer to the upstream project:
+
+<div align="center">
+
+### [→ openai/codex README](https://github.com/openai/codex/blob/main/README.md)
+
+### [→ Codex Documentation](https://developers.openai.com/codex)
+
+</div>
+
+The only additions in this fork are the ones listed under [What's different](#whats-different). Treat the upstream docs as the source of truth for everything else.
+
+---
+
+## Install
+
+```bash
+npm install -g @beltromatti/supercodex
+supercodex --help
 ```
 
-```shell
-# Install using Homebrew
-brew install --cask codex
-```
+The npm package is a thin launcher; its postinstall downloads the right binary for your platform (macOS arm64, Linux x64, Windows x64) from the matching [GitHub Release](https://github.com/beltromatti/supercodex/releases). No `@openai/...` platform sub-packages involved.
 
-Then simply run `codex` to get started.
+---
 
-<details>
-<summary>You can also go to the <a href="https://github.com/openai/codex/releases/latest">latest GitHub Release</a> and download the appropriate binary for your platform.</summary>
+## Contributing & deeper docs
 
-Each GitHub Release contains many executables, but in practice, you likely want one of these:
+Super Codex is a small, opinionated fork. Before opening an issue or a pull request, please skim:
 
-- macOS
-  - Apple Silicon/arm64: `codex-aarch64-apple-darwin.tar.gz`
-  - x86_64 (older Mac hardware): `codex-x86_64-apple-darwin.tar.gz`
-- Linux
-  - x86_64: `codex-x86_64-unknown-linux-musl.tar.gz`
-  - arm64: `codex-aarch64-unknown-linux-musl.tar.gz`
+- [**Contributing guide**](docs/contributing.md) — scope, where issues belong vs. upstream, merge-window cadence, PR checklist.
+- [**Technical notes**](SUPERCODEX.md) — complete description of every change relative to upstream, the release pipeline, the postinstall mechanism, and the maintenance workflow.
 
-Each archive contains a single entry with the platform baked into the name (e.g., `codex-x86_64-unknown-linux-musl`), so you likely want to rename it to `codex` after extracting it.
+---
 
-</details>
+## Disclaimer
 
-### Using Codex with your ChatGPT plan
+> [!WARNING]
+> **Super Codex is not affiliated with, endorsed by, or supported by OpenAI.**
+> It is a personal fork maintained by an independent developer.
+>
+> The software is provided **"as is", without warranty of any kind**, express or implied. The author is **not responsible** for:
+> - how you use this software, including any interaction with OpenAI's services or terms of use;
+> - any data loss, account action, billing impact, or damage caused by running it;
+> - any discrepancy between its behaviour and the official OpenAI Codex;
+> - anything produced, suggested, or executed by the agent while it is running.
+>
+> If you need official support, a supported product, or a stable release cadence, use the [official OpenAI Codex](https://github.com/openai/codex) instead. If you have any doubt about whether a given feature complies with OpenAI's terms of service for your plan, review those terms yourself before enabling it.
 
-Run `codex` and select **Sign in with ChatGPT**. We recommend signing into your ChatGPT account to use Codex as part of your Plus, Pro, Business, Edu, or Enterprise plan. [Learn more about what's included in your ChatGPT plan](https://help.openai.com/en/articles/11369540-codex-in-chatgpt).
+---
 
-You can also use Codex with an API key, but this requires [additional setup](https://developers.openai.com/codex/auth#sign-in-with-an-api-key).
+## License
 
-## Docs
+Super Codex inherits the upstream license — **[Apache-2.0](LICENSE)**, the same license as OpenAI Codex.
 
-- [**Codex Documentation**](https://developers.openai.com/codex)
-- [**Contributing**](./docs/contributing.md)
-- [**Installing & building**](./docs/install.md)
-- [**Open source fund**](./docs/open-source-fund.md)
+<br />
 
-This repository is licensed under the [Apache-2.0 License](LICENSE).
+<div align="center">
+
+<sub>Built on top of <a href="https://github.com/openai/codex">OpenAI Codex</a>  ·  Not an OpenAI product  ·  Use at your own discretion</sub>
+
+</div>

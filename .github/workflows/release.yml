@@ -1,0 +1,231 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "super-v*.*.*"
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  # ------------------------------------------------------------------------
+  # Derive a plain semver version from the rust-vX.Y.Z tag and write it into
+  # the workspace Cargo.toml + codex-cli/package.json so every build produces
+  # binaries and an npm tarball stamped with that version instead of 0.0.0.
+  # ------------------------------------------------------------------------
+  prepare:
+    name: Prepare release metadata
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Derive version from tag
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#super-v}"
+          if [[ -z "${VERSION}" || "${VERSION}" == "${TAG}" ]]; then
+            echo "could not parse semver from tag ${TAG}" >&2
+            exit 1
+          fi
+          echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
+          echo "Derived version: ${VERSION}"
+
+  # ------------------------------------------------------------------------
+  # Build the supercodex binary for the three release targets using only
+  # standard (free on public repos) GitHub-hosted runners.
+  #
+  # Each job uploads its binary tarball as an artifact so the `release` job
+  # downstream can attach them all to a single GitHub Release.
+  # ------------------------------------------------------------------------
+  build:
+    name: Build ${{ matrix.target }}
+    needs: prepare
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            runner: macos-latest
+            binary: supercodex
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-24.04
+            binary: supercodex
+          - target: x86_64-pc-windows-msvc
+            runner: windows-latest
+            binary: supercodex.exe
+    env:
+      # Use the git CLI for cargo git fetches — libgit2 chokes on Chromium's
+      # googlesource endpoint that libwebrtc pulls as a submodule on macOS.
+      CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+      CARGO_NET_RETRY: "10"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux build deps (libcap-dev for codex-linux-sandbox)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libcap-dev pkg-config
+
+      - name: Inject release version into Cargo workspace
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.prepare.outputs.version }}"
+          # Replace the workspace-level `version = "..."` inside [workspace.package].
+          python3 - <<PY
+          import re, pathlib
+          path = pathlib.Path("codex-rs/Cargo.toml")
+          src = path.read_text()
+          src = re.sub(
+              r'(\[workspace\.package\][^\[]*?version\s*=\s*")[^"]+(")',
+              lambda m: f'{m.group(1)}${{ needs.prepare.outputs.version }}{m.group(2)}',
+              src,
+              count=1,
+              flags=re.S,
+          )
+          path.write_text(src)
+          PY
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: codex-rs
+
+      - name: Build (release)
+        shell: bash
+        working-directory: codex-rs
+        run: |
+          set -euo pipefail
+          # Retry up to 3 times to absorb transient Chromium/git flakiness
+          # (libwebrtc submodule fetch is the known-fragile path on macOS).
+          for attempt in 1 2 3; do
+            if cargo build --release --target ${{ matrix.target }} -p codex-cli; then
+              exit 0
+            fi
+            echo "::warning::cargo build attempt ${attempt} failed, retrying..."
+            sleep 10
+          done
+          echo "::error::cargo build failed after 3 attempts"
+          exit 1
+
+      - name: Stage artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.prepare.outputs.version }}"
+          TARGET="${{ matrix.target }}"
+          BIN="${{ matrix.binary }}"
+          OUT="codex-rs/target/${TARGET}/release/${BIN}"
+          if [[ ! -f "${OUT}" ]]; then
+            echo "missing ${OUT}" >&2
+            ls "codex-rs/target/${TARGET}/release" >&2 || true
+            exit 1
+          fi
+          mkdir -p staging
+          # Raw binary uploaded under the version-stamped name that the npm
+          # package's postinstall downloads directly from the GH Release.
+          if [[ "${TARGET}" == *windows* ]]; then
+            cp "${OUT}" "staging/supercodex-${VERSION}-${TARGET}.exe"
+          else
+            cp "${OUT}" "staging/supercodex-${VERSION}-${TARGET}"
+          fi
+          # Also bundle the same binary inside a tar/zip for people who prefer
+          # to download an archive instead of the raw executable.
+          STAGE="staging/archive-${TARGET}"
+          mkdir -p "${STAGE}"
+          cp "${OUT}" "${STAGE}/${BIN}"
+          cd staging
+          if [[ "${TARGET}" == *windows* ]]; then
+            7z a "supercodex-${VERSION}-${TARGET}.zip" "archive-${TARGET}/${BIN}" >/dev/null
+          else
+            tar -czf "supercodex-${VERSION}-${TARGET}.tar.gz" -C "archive-${TARGET}" "${BIN}"
+          fi
+          rm -rf "archive-${TARGET}"
+
+      - name: Upload release assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.target }}
+          path: staging/*
+          retention-days: 7
+
+  # ------------------------------------------------------------------------
+  # Publish the GitHub Release first (so its assets are reachable), THEN
+  # publish the npm package. The npm package is small (no vendored binaries)
+  # — its postinstall script downloads the right platform binary from the
+  # GitHub Release that matches the package version.
+  # ------------------------------------------------------------------------
+  release:
+    name: Publish GitHub Release + npm
+    needs: [prepare, build]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: downloaded
+
+      - name: Create GitHub Release with binaries and archives
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Super Codex ${{ needs.prepare.outputs.version }}
+          body: |
+            Super Codex release `${{ needs.prepare.outputs.version }}`.
+
+            Installable from npm:
+            ```
+            npm install -g @beltromatti/supercodex@${{ needs.prepare.outputs.version }}
+            ```
+
+            Or download the archive/binary for your platform below and run
+            the `supercodex` binary directly.
+          files: |
+            downloaded/release-aarch64-apple-darwin/*
+            downloaded/release-x86_64-unknown-linux-gnu/*
+            downloaded/release-x86_64-pc-windows-msvc/*
+          draft: false
+          prerelease: false
+
+      - name: Stamp npm package version
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.prepare.outputs.version }}"
+          python3 - <<PY
+          import json, pathlib
+          path = pathlib.Path("codex-cli/package.json")
+          data = json.loads(path.read_text())
+          data["version"] = "${VERSION}"
+          path.write_text(json.dumps(data, indent=2) + "\n")
+          PY
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Publish to npm
+        working-directory: codex-cli
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public

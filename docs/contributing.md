@@ -1,97 +1,175 @@
-## Contributing
+# Contributing to Super Codex
 
-**External contributions are by invitation only**
+Super Codex is an **unofficial, community-driven fork** of
+[`openai/codex`](https://github.com/openai/codex). It is maintained by an
+independent developer on personal time. There is no company, no SLA, no
+paid support. That context shapes everything below.
 
-At this time, the Codex team does not accept unsolicited code contributions.
+This page covers:
 
-If you would like to propose a new feature or a change in behavior, please open an issue describing the proposal or upvote an existing enhancement request. We prioritize new features based on community feedback, alignment with our roadmap, and consistency across all Codex surfaces (CLI, IDE extensions, web, etc.).
+- the scope of what belongs in Super Codex (and what does not),
+- how the fork is kept in sync with upstream,
+- how contributions flow through that sync cycle,
+- and what to expect as a contributor or user filing an issue.
 
-If you encounter a bug, please open a bug report or verify that an existing report already covers the issue. If you would like to help, we encourage you to contribute by sharing analysis, reproduction details, root-cause hypotheses, or a high-level outline of a potential fix directly in the issue thread.
+Reading this file in full before opening an issue or a pull request is
+appreciated — it will save everyone time.
 
-The Codex team may invite an external contributor to submit a pull request when:
+---
 
-- the problem is well understood,
-- the proposed approach aligns with the team’s intended solution, and
-- the issue is deemed high-impact and high-priority.
+## 1. Where the project is going
 
-Pull requests that have not been explicitly invited by a member of the Codex team will be closed without review.
+Super Codex's purpose is to serve users whose needs fall outside the
+happy-path that upstream OpenAI Codex is optimised for. The project is
+currently evolving along **two active focus areas**:
 
-**Why we do not generally accept external code contributions**
+### 1.1 Multi-account ChatGPT support
 
-In the past, the Codex team accepted external pull requests for bug fixes. While we appreciated the effort and engagement from the community, this model did not scale well.
+- CLI commands: `/accounts` (list + switch in one view), `/addaccount`, `/removeaccount`.
+- Automatic rotation of saved ChatGPT accounts when the active one hits a
+  usage limit mid-turn, so the running task continues without manual
+  intervention.
+- Persistent account registry on disk, with clean separation between the
+  currently active auth and the saved alternatives.
 
-Many contributions were made without full visibility into the architectural context, system-level constraints, or near-term roadmap considerations that guide Codex development. Others focused on issues that were low priority or affected a very small subset of users. Reviewing and iterating on these PRs often took more time than implementing the fix directly, and diverted attention from higher-priority work.
+### 1.2 Broader provider support
 
-The most valuable contributions consistently came from community members who demonstrated deep understanding of a problem domain. That expertise is most helpful when shared early -- through detailed bug reports, analysis, and design discussion in issues. Identifying the right solution is typically the hard part; implementing it is comparatively straightforward with the help of Codex itself.
+- First-class integration with a **self-hosted vLLM server** running
+  Qwen3-VL-32B-Instruct-AWQ (out of the box, with a runtime prompt for the
+  server URL).
+- A generalisable pattern that other self-hosted / non-OpenAI providers
+  can plug into in future.
 
-For these reasons, we focus external contributions on discussion, analysis, and feedback, and reserve code changes for cases where a targeted invitation makes sense.
+Work that helps either of these two tracks is likely to be accepted and
+is what maintainer attention gravitates toward. Work outside those tracks
+is usually a better fit for the upstream project — see section 2.
 
-### Development workflow
+### 1.3 Fork maintenance (implicit third track)
 
-If you are invited by a Codex team member to contribute a PR, here is the recommended development workflow.
+Super Codex also maintains a small set of infrastructure that is its own
+and will never come from upstream:
 
-- Create a _topic branch_ from `main` - e.g. `feat/interactive-prompt`.
-- Keep your changes focused. Multiple unrelated fixes should be opened as separate PRs.
-- Ensure your change is free of lint warnings and test failures.
+- the CLI binary rebrand (`supercodex`),
+- the npm package `@beltromatti/supercodex` and its postinstall installer,
+- the release workflow in `.github/workflows/release.yml`,
+- the Super Codex splash, README, banner, and update-checker URL.
 
-### Guidance for invited code contributions
+PRs that keep that surface clean are welcome.
 
-1. **Start with an issue.** Open a new one or comment on an existing discussion so we can agree on the solution before code is written.
-2. **Add or update tests.** A bug fix should generally come with test coverage that fails before your change and passes afterwards. 100% coverage is not required, but aim for meaningful assertions.
-3. **Document behavior.** If your change affects user-facing behavior, update the README, inline help (`codex --help`), or relevant example projects.
-4. **Keep commits atomic.** Each commit should compile and the tests should pass. This makes reviews and potential rollbacks easier.
+---
 
-### Model metadata updates
+## 2. Where issues and PRs should actually go
 
-When a change updates model catalogs or model metadata (`/models` payloads, presets, or fixtures):
+Super Codex is a thin layer over upstream. The vast majority of behaviour
+in the binary — the agent loop, model catalog, sandboxing, tools,
+approvals, editing UX, MCP, plugins, the whole TUI — lives in
+`openai/codex` and comes into Super Codex on the next merge window.
 
-- Set `input_modalities` explicitly for any model that does not support images.
-- Keep compatibility defaults in mind: omitted `input_modalities` currently implies text + image support.
-- Ensure client surfaces that accept images (for example, TUI paste/attach) consume the same capability signal.
-- Add/update tests that cover unsupported-image behavior and warning paths.
+### Open upstream in `openai/codex` if…
+- the bug reproduces on the equivalent upstream release, or
+- the feature you want is about the core agent, approvals, sandboxing,
+  editing, TUI rendering, model catalog entries, plugin system, MCP, or
+  anything that is the same in Codex itself.
 
-### Opening a pull request (by invitation only)
+Those fixes and features reach Super Codex automatically — see section 3.
 
-- Fill in the PR template (or include similar information) - **What? Why? How?**
-- Include a link to a bug report or enhancement request in the issue tracker
-- Run **all** checks locally. Use the root `just` helpers so you stay consistent with the rest of the workspace: `just fmt`, `just fix -p <crate>` for the crate you touched, and the relevant tests (e.g., `cargo test -p codex-tui` or `just test` if you need a full sweep). CI failures that could have been caught locally slow down the process.
-- Make sure your branch is up-to-date with `main` and that you have resolved merge conflicts.
-- Mark the PR as **Ready for review** only when you believe it is in a merge-able state.
+### Open here in `beltromatti/supercodex` if…
+- the bug is specific to one of the fork's focus areas in section 1,
+- the bug is in the fork's own maintenance surface (section 1.3), or
+- you have a concrete proposal for one of the focus areas.
 
-### Review process
+When in doubt, open it here — the maintainer will redirect upstream if
+that's the right place.
 
-1. One maintainer will be assigned as a primary reviewer.
-2. If your invited PR introduces scope or behavior that was not previously discussed and approved, we may close the PR.
-3. We may ask for changes. Please do not take this personally. We value the work, but we also value consistency and long-term maintainability.
-4. When there is consensus that the PR meets the bar, a maintainer will squash-and-merge.
+---
 
-### Community values
+## 3. Maintenance and update cadence
 
-- **Be kind and inclusive.** Treat others with respect; we follow the [Contributor Covenant](https://www.contributor-covenant.org/).
-- **Assume good intent.** Written communication is hard - err on the side of generosity.
-- **Teach & learn.** If you spot something confusing, open an issue or discussion with suggestions or clarifications.
+Super Codex does not live on a fixed release schedule. Its cadence is
+**driven by upstream**:
 
-### Getting help
+1. Every time **OpenAI Codex ships a new stable release** (tag
+   `rust-vX.Y.Z` on `openai/codex`, not an alpha), the Super Codex
+   maintainer opens a merge window.
+2. During that window the maintainer:
+   - rebases the fork's feature commits on top of the new upstream tag,
+   - resolves any conflicts introduced by upstream refactors,
+   - reviews the issues and pull requests that have accumulated on
+     `beltromatti/supercodex` since the previous merge window,
+   - pulls in the ones that fit the focus areas from section 1, and
+   - ships a new Super Codex release as
+     `super-vX.Y.Z` (matching the upstream version the fork is
+     based on, with a `+N` suffix for fork-only follow-up patches when
+     needed).
+3. That `super-vX.Y.Z` tag triggers the release workflow, which builds
+   the binary for macOS arm64, Linux x64 and Windows x64 and publishes
+   the npm package `@beltromatti/supercodex` with a postinstall script
+   that downloads the matching binary from the GitHub Release.
 
-If you run into problems setting up the project, would like feedback on an idea, or just want to say _hi_ - please open a Discussion topic or jump into the relevant issue. We are happy to help.
+**Practical consequence for contributors**: your issue or PR will not
+get an immediate reply. It will be read and triaged the next time a
+merge window opens. If you want to accelerate that, the best thing you
+can do is pin your PR to one of the focus areas, keep it small, and
+include a clear test plan.
 
-Together we can make Codex CLI an incredible tool. **Happy hacking!** :rocket:
+---
 
-### Contributor license agreement (CLA)
+## 4. How to contribute
 
-All contributors **must** accept the CLA. The process is lightweight:
+### 4.1 Filing an issue
+- Search existing issues first (including closed). Upvote with a 👍
+  instead of opening a duplicate.
+- Use the **Bug Report** template if something is broken.
+- If you're unsure whether the bug is fork-specific or upstream, tick
+  "I'm not sure" in the template — the maintainer will move it.
+- For feature ideas, open a regular issue with a clear problem
+  statement and, if you have one, a sketch of the API / UX.
 
-1. Open your pull request.
-2. Paste the following comment (or reply `recheck` if you've signed before):
+### 4.2 Opening a pull request
 
-   ```text
-   I have read the CLA Document and I hereby sign the CLA
-   ```
+Before coding, please:
+- read section 1 to check your change fits a focus area,
+- confirm the change does not belong in upstream `openai/codex`
+  (section 2).
 
-3. The CLA-Assistant bot records your signature in the repo and marks the status check as passed.
+Then:
+1. Fork the repository and branch from `main`.
+2. Keep the change small and scoped. One PR per concern.
+3. Run `cargo check --workspace --all-targets` inside `codex-rs/`.
+4. If the change touches user-facing strings, update the relevant docs
+   and `README.md`.
+5. Fill out the PR template honestly. The "Focus area" checkbox matters.
+6. Do not force-push after review starts — just add follow-up commits.
 
-No special Git commands, email attachments, or commit footers required.
+### 4.3 What gets merged
 
-### Security & responsible AI
+Super Codex PRs are merged when they:
+- align with a focus area in section 1,
+- come with a clear problem statement and a minimal reproducer or
+  test,
+- do not silently alter upstream behaviour that users rely on, and
+- the maintainer can read and reason about end-to-end in one sitting.
 
-Have you discovered a vulnerability or have concerns about model output? Please e-mail **security@openai.com** and we will respond promptly.
+Large refactors, speculative reshuffles, or PRs that rewrite upstream
+modules will typically be redirected to `openai/codex`.
+
+---
+
+## 5. What not to send here
+
+- **Security issues in the upstream agent/sandbox code.** Report those
+  to OpenAI directly, not here. The fork has no private security channel
+  and the fix belongs upstream anyway.
+- **Code of Conduct or legal matters.** Super Codex inherits the
+  upstream Apache-2.0 license and offers no warranty (see the README's
+  disclaimer). For questions about OpenAI's terms of service when using
+  multi-account features, consult those terms yourself before enabling
+  them.
+- **Support questions.** Super Codex does not provide user support. For
+  help running the official Codex, ask upstream.
+
+---
+
+Thanks for reading. If you made it this far, you already know more about
+this project than 95 % of the people opening issues. Your contribution
+will be read with care.

@@ -1,0 +1,95 @@
+name: Bug Report
+description: Report something that is broken in Super Codex.
+title: "[bug] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug report.
+
+        Before opening a new issue, please search the existing ones (including
+        closed) — if you find one that matches your problem, add a 👍 to it
+        instead of opening a duplicate.
+
+        If your issue is with the official OpenAI Codex and not specific to
+        Super Codex's fork additions, please report it upstream at
+        https://github.com/openai/codex/issues — Super Codex inherits
+        upstream fixes on the next merge window.
+
+  - type: input
+    id: version
+    attributes:
+      label: Super Codex version
+      description: Output of `supercodex --version`.
+      placeholder: supercodex 0.121.1
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install-method
+    attributes:
+      label: Installation method
+      options:
+        - npm (@beltromatti/supercodex)
+        - GitHub Release binary
+        - Built from source (cargo)
+        - Other (describe below)
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating system + architecture
+      placeholder: macOS 14.5 (aarch64-apple-darwin) / Ubuntu 24.04 (x86_64) / Windows 11 (x86_64)
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: Describe the unexpected behaviour.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: A minimal, numbered list of steps that reliably triggers the bug.
+      placeholder: |
+        1. Start `supercodex`.
+        2. Run `/swapaccount`.
+        3. See the error about ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs or screenshots
+      description: |
+        Paste any panic backtrace, error message, or terminal output here.
+        For realtime/voice issues please also attach the session rollout file
+        path (shown by `/rollout`).
+      render: shell
+
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Is this specific to Super Codex?
+      description: Tick only if you've verified the behaviour does NOT exist in upstream openai/codex at the same base tag.
+      options:
+        - label: The bug is specific to Super Codex (affects multi-account, Qwen/self-hosted provider, splash, or installer).
+        - label: The bug is inherited from upstream and also affects openai/codex.
+        - label: I'm not sure which side owns this bug.
