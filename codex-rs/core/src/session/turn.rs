@@ -3,6 +3,8 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
+use codex_login::CodexAuth;
+
 use crate::SkillInjections;
 use crate::SkillLoadOutcome;
 use crate::build_skill_injections;
@@ -1053,6 +1055,12 @@ async fn run_sampling_request(
         .await;
     let mut retries = 0;
     let mut initial_input = Some(input);
+    // Super Codex: set of saved-account registry ids that have already
+    // hit a usage limit during this sampling loop. Used so the
+    // auto-rotation path does not bounce between the same exhausted
+    // accounts on consecutive retries.
+    let mut exhausted_usage_limit_account_ids: std::collections::HashSet<String> =
+        std::collections::HashSet::new();
     loop {
         let prompt_input = if let Some(input) = initial_input.take() {
             input
@@ -1090,6 +1098,69 @@ async fn run_sampling_request(
                 let rate_limits = e.rate_limits.clone();
                 if let Some(rate_limits) = rate_limits {
                     sess.update_rate_limits(&turn_context, *rate_limits).await;
+                }
+                // Super Codex: auto-rotate to the next saved ChatGPT
+                // account when the active one hits its usage limit. We
+                // only try this for ChatGPT auths (API-key auth has
+                // nothing to rotate to) and only when the session was
+                // configured with saved accounts in accounts.json.
+                let auth_manager = Arc::clone(&sess.services.auth_manager);
+                let active_is_chatgpt = auth_manager
+                    .auth_cached()
+                    .as_ref()
+                    .is_some_and(CodexAuth::is_chatgpt_auth);
+                if active_is_chatgpt {
+                    if let Some(hit_id) = auth_manager
+                        .auth_cached()
+                        .as_ref()
+                        .and_then(CodexAuth::get_account_id)
+                    {
+                        exhausted_usage_limit_account_ids.insert(hit_id);
+                    }
+                    let (codex_home, credentials_store_mode) = {
+                        let state = sess.state.lock().await;
+                        (
+                            state.session_configuration.codex_home().clone(),
+                            state
+                                .session_configuration
+                                .original_config_do_not_use
+                                .cli_auth_credentials_store_mode,
+                        )
+                    };
+                    match auth_manager
+                        .rotate_to_next_saved_chatgpt_account(
+                            codex_home.as_path(),
+                            credentials_store_mode,
+                            &exhausted_usage_limit_account_ids,
+                        )
+                        .await
+                    {
+                        Ok(Some(next)) => {
+                            sess.send_event(
+                                &turn_context,
+                                EventMsg::Warning(WarningEvent {
+                                    message: format!(
+                                        "Usage limit hit on this account; switched to {} and retrying.",
+                                        next.label
+                                    ),
+                                }),
+                            )
+                            .await;
+                            client_session.reset_websocket_session();
+                            retries = 0;
+                            continue;
+                        }
+                        Ok(None) => {
+                            // No other eligible saved account — fall
+                            // through to surfacing the error.
+                        }
+                        Err(rotate_err) => {
+                            tracing::warn!(
+                                error = %rotate_err,
+                                "Super Codex: auto-rotate on UsageLimitReached failed"
+                            );
+                        }
+                    }
                 }
                 return Err(CodexErr::UsageLimitReached(e));
             }

@@ -244,6 +244,17 @@ impl App {
                         .add_error_message(format!("Logout failed: {err}"));
                 }
             },
+            AppEvent::SwitchChatgptAccountRequested { account_id } => {
+                self.handle_switch_chatgpt_account(app_server, account_id)
+                    .await;
+            }
+            AppEvent::ReloadAuthRequested => {
+                self.handle_reload_auth(app_server).await;
+            }
+            AppEvent::RemoveChatgptAccountRequested { account_id, label } => {
+                self.handle_remove_chatgpt_account(app_server, account_id, label)
+                    .await;
+            }
             AppEvent::FatalExitRequest(message) => {
                 return Ok(AppRunControl::Exit(ExitReason::Fatal(message)));
             }

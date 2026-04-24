@@ -290,6 +290,15 @@ impl ChatWidget {
             SlashCommand::Logout => {
                 self.app_event_tx.send(AppEvent::Logout);
             }
+            SlashCommand::Accounts => {
+                self.open_accounts_list_popup();
+            }
+            SlashCommand::AddAccount => {
+                self.start_add_account_login();
+            }
+            SlashCommand::RemoveAccount => {
+                self.open_remove_account_popup();
+            }
             // SlashCommand::Undo => {
             //     self.app_event_tx.send(AppEvent::CodexOp(Op::Undo));
             // }
@@ -758,6 +767,9 @@ impl ChatWidget {
             | SlashCommand::Quit
             | SlashCommand::Exit
             | SlashCommand::Logout
+            | SlashCommand::Accounts
+            | SlashCommand::AddAccount
+            | SlashCommand::RemoveAccount
             | SlashCommand::Mention
             | SlashCommand::Skills
             | SlashCommand::Title

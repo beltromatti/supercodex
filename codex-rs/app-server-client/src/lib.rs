@@ -49,6 +49,7 @@ pub use codex_exec_server::EnvironmentManager;
 pub use codex_exec_server::EnvironmentManagerArgs;
 pub use codex_exec_server::ExecServerRuntimePaths;
 use codex_feedback::CodexFeedback;
+pub use codex_login::AuthManager;
 use codex_protocol::protocol::SessionSource;
 use serde::de::DeserializeOwned;
 use tokio::sync::mpsc;
@@ -443,6 +444,12 @@ pub struct InProcessAppServerClient {
     command_tx: mpsc::Sender<ClientCommand>,
     event_rx: mpsc::Receiver<InProcessServerEvent>,
     worker_handle: tokio::task::JoinHandle<()>,
+    /// Super Codex: shared auth manager for the embedded runtime.
+    /// Captured from the underlying [`InProcessClientHandle`] before
+    /// the handle is consumed by the worker task, so TUI callers can
+    /// drive multi-account switch/reload directly through
+    /// [`AppServerClient::auth_manager`].
+    auth_manager: Arc<AuthManager>,
 }
 
 #[derive(Clone)]
@@ -472,6 +479,11 @@ impl InProcessAppServerClient {
         let mut handle =
             codex_app_server::in_process::start(args.into_runtime_start_args()).await?;
         let request_sender = handle.sender();
+        // Super Codex: capture the shared AuthManager out of the handle
+        // before it moves into the worker task below, so TUI callers
+        // can drive multi-account switch/reload directly against the
+        // same Arc the embedded runtime uses.
+        let auth_manager = handle.auth_manager();
         let (command_tx, mut command_rx) = mpsc::channel::<ClientCommand>(channel_capacity);
         let (event_tx, event_rx) = mpsc::channel::<InProcessServerEvent>(channel_capacity);
 
@@ -583,7 +595,16 @@ impl InProcessAppServerClient {
             command_tx,
             event_rx,
             worker_handle,
+            auth_manager,
         })
+    }
+
+    /// Super Codex: returns a clone of the shared [`AuthManager`]
+    /// backing the embedded app-server runtime. Used by multi-account
+    /// flows in the TUI to call into `AuthManager` directly instead of
+    /// going through the RPC layer.
+    pub fn auth_manager(&self) -> Arc<AuthManager> {
+        Arc::clone(&self.auth_manager)
     }
 
     pub fn request_handle(&self) -> InProcessAppServerRequestHandle {
@@ -744,6 +765,7 @@ impl InProcessAppServerClient {
             command_tx,
             event_rx,
             worker_handle,
+            auth_manager: _,
         } = self;
         let mut worker_handle = worker_handle;
         // Drop the caller-facing receiver before asking the worker to shut
@@ -902,6 +924,21 @@ impl AppServerClient {
         match self {
             Self::InProcess(client) => AppServerRequestHandle::InProcess(client.request_handle()),
             Self::Remote(client) => AppServerRequestHandle::Remote(client.request_handle()),
+        }
+    }
+
+    /// Super Codex: returns the shared [`AuthManager`] for in-process
+    /// clients, or `None` for remote clients.
+    ///
+    /// Remote app-server clients intentionally do not expose an
+    /// AuthManager: the embedder lives in another process and cannot
+    /// share an Arc across that boundary. Callers that rely on direct
+    /// auth manipulation (multi-account switching, registry reload)
+    /// should surface a clean error in remote mode rather than guess.
+    pub fn auth_manager(&self) -> Option<Arc<AuthManager>> {
+        match self {
+            Self::InProcess(client) => Some(client.auth_manager()),
+            Self::Remote(_) => None,
         }
     }
 }
@@ -1885,10 +1922,17 @@ mod tests {
             .expect("lagged marker should enqueue");
         drop(event_tx);
 
+        let auth_manager = codex_login::AuthManager::shared(
+            std::path::PathBuf::from("non-existent"),
+            /*enable_codex_api_key_env*/ false,
+            codex_login::AuthCredentialsStoreMode::File,
+            /*chatgpt_base_url*/ None,
+        );
         let mut client = InProcessAppServerClient {
             command_tx,
             event_rx,
             worker_handle,
+            auth_manager,
         };
 
         let event = timeout(Duration::from_secs(2), client.next_event())

@@ -207,6 +207,17 @@ impl AppServerSession {
         matches!(self.client, AppServerClient::Remote(_))
     }
 
+    /// Super Codex: shared auth manager for the embedded app-server
+    /// runtime, or `None` when this session speaks to a remote
+    /// app-server. TUI account switch / reload flows use this to
+    /// drive `AuthManager` directly because the 0.124 RPC surface has
+    /// no typed method for those operations.
+    pub(crate) fn auth_manager(
+        &self,
+    ) -> Option<std::sync::Arc<codex_app_server_client::AuthManager>> {
+        self.client.auth_manager()
+    }
+
     pub(crate) async fn bootstrap(&mut self, config: &Config) -> Result<AppServerBootstrap> {
         let account = self.read_account().await?;
         let model_request_id = self.next_request_id();

@@ -161,6 +161,25 @@ pub(crate) enum AppEvent {
     /// Request app-server account logout, then exit after it succeeds.
     Logout,
 
+    /// Super Codex: user picked a saved account in `/accounts` and
+    /// pressed Enter; swap the live session to that account via the
+    /// shared AuthManager.
+    SwitchChatgptAccountRequested {
+        account_id: String,
+    },
+
+    /// Super Codex: `/addaccount` finished a login flow; reload the
+    /// shared AuthManager so the next request uses the fresh tokens.
+    ReloadAuthRequested,
+
+    /// Super Codex: user picked an entry in `/removeaccount`. The App
+    /// layer deletes the registry row and, if it was the currently
+    /// active account, auto-rotates to the first remaining saved one.
+    RemoveChatgptAccountRequested {
+        account_id: String,
+        label: String,
+    },
+
     /// Request to exit the application due to a fatal error.
     #[allow(dead_code)]
     FatalExitRequest(String),

@@ -47,6 +47,10 @@ pub enum SlashCommand {
     Apps,
     Plugins,
     Logout,
+    // Super Codex: multi-account management.
+    Accounts,
+    AddAccount,
+    RemoveAccount,
     Quit,
     Exit,
     Feedback,
@@ -119,6 +123,9 @@ impl SlashCommand {
             SlashCommand::Apps => "manage apps",
             SlashCommand::Plugins => "browse plugins",
             SlashCommand::Logout => "log out of Codex",
+            SlashCommand::Accounts => "list and switch between saved ChatGPT accounts",
+            SlashCommand::AddAccount => "add a ChatGPT account",
+            SlashCommand::RemoveAccount => "remove a saved ChatGPT account",
             SlashCommand::Rollout => "print the rollout file path",
             SlashCommand::TestApproval => "test approval request",
         }
@@ -175,6 +182,9 @@ impl SlashCommand {
             | SlashCommand::Plan
             | SlashCommand::Clear
             | SlashCommand::Logout
+            | SlashCommand::Accounts
+            | SlashCommand::AddAccount
+            | SlashCommand::RemoveAccount
             | SlashCommand::MemoryDrop
             | SlashCommand::MemoryUpdate => false,
             SlashCommand::Diff

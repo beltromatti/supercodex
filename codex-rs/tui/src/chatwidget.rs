@@ -364,6 +364,15 @@ use crate::render::renderable::Renderable;
 use crate::render::renderable::RenderableExt;
 use crate::render::renderable::RenderableItem;
 use crate::slash_command::SlashCommand;
+// Super Codex: multi-account registry + login-server helpers used by
+// the `/accounts`, `/addaccount`, and `/removeaccount` flows below.
+use codex_login::CLIENT_ID;
+use codex_login::SavedChatgptAccount;
+use codex_login::ServerOptions;
+use codex_login::current_saved_chatgpt_account_id;
+use codex_login::list_saved_chatgpt_accounts;
+use codex_login::run_login_server;
+use codex_login::upsert_active_chatgpt_account;
 use crate::status::RateLimitSnapshotDisplay;
 use crate::status_indicator_widget::STATUS_DETAILS_DEFAULT_MAX_LINES;
 use crate::status_indicator_widget::StatusDetailsCapitalization;
@@ -9061,6 +9070,227 @@ impl ChatWidget {
         );
 
         self.bottom_pane.show_view(Box::new(view));
+    }
+
+    fn load_saved_accounts_with_current(
+        &mut self,
+    ) -> Option<(Vec<SavedChatgptAccount>, Option<String>)> {
+        let accounts = match list_saved_chatgpt_accounts(&self.config.codex_home) {
+            Ok(accounts) => accounts,
+            Err(err) => {
+                self.add_error_message(format!("Failed to load saved accounts: {err}"));
+                return None;
+            }
+        };
+        let current_id = match current_saved_chatgpt_account_id(
+            &self.config.codex_home,
+            self.config.cli_auth_credentials_store_mode,
+        ) {
+            Ok(current_id) => current_id,
+            Err(err) => {
+                self.add_error_message(format!("Failed to resolve active account: {err}"));
+                return None;
+            }
+        };
+        Some((accounts, current_id))
+    }
+
+    pub(crate) fn open_accounts_list_popup(&mut self) {
+        let Some((accounts, current_id)) = self.load_saved_accounts_with_current() else {
+            return;
+        };
+
+        if accounts.is_empty() {
+            self.add_info_message(
+                "No saved ChatGPT accounts yet.".to_string(),
+                Some("Run /addaccount to add one.".to_string()),
+            );
+            return;
+        }
+
+        let mut items: Vec<SelectionItem> = Vec::with_capacity(accounts.len());
+
+        for entry in accounts {
+            let is_current = current_id.as_deref() == Some(entry.id.as_str());
+            let account_id = entry.id.clone();
+            let label = entry.label.clone();
+            let search_value = format!("{label} {account_id}");
+            let action_account_id = account_id.clone();
+            let name = if is_current {
+                format!("[ACTIVE] {label}")
+            } else {
+                label.clone()
+            };
+
+            items.push(SelectionItem {
+                name,
+                description: Some(account_id),
+                is_current,
+                is_disabled: is_current,
+                disabled_reason: is_current.then_some("Already active".to_string()),
+                actions: vec![Box::new(move |tx| {
+                    tx.send(AppEvent::SwitchChatgptAccountRequested {
+                        account_id: action_account_id.clone(),
+                    });
+                })],
+                dismiss_on_select: true,
+                search_value: Some(search_value),
+                ..Default::default()
+            });
+        }
+
+        self.bottom_pane.show_selection_view(SelectionViewParams {
+            title: Some("Saved ChatGPT accounts".to_string()),
+            subtitle: Some(
+                "Use ↑/↓ to highlight, Enter to switch to the selected account."
+                    .to_string(),
+            ),
+            footer_hint: Some(standard_popup_hint_line()),
+            items,
+            is_searchable: true,
+            search_placeholder: Some("Type to search accounts".to_string()),
+            ..Default::default()
+        });
+        self.request_redraw();
+    }
+
+    pub(crate) fn open_remove_account_popup(&mut self) {
+        let Some((accounts, current_id)) = self.load_saved_accounts_with_current() else {
+            return;
+        };
+
+        if accounts.is_empty() {
+            self.add_info_message("No saved accounts to remove.".to_string(), None);
+            return;
+        }
+
+        let mut items: Vec<SelectionItem> = Vec::with_capacity(accounts.len());
+
+        for entry in accounts {
+            let is_current = current_id.as_deref() == Some(entry.id.as_str());
+            let account_id = entry.id.clone();
+            let label = entry.label.clone();
+            let search_value = format!("{label} {account_id}");
+            let action_account_id = account_id.clone();
+            let action_label = label.clone();
+
+            items.push(SelectionItem {
+                name: label.clone(),
+                description: Some(account_id.clone()),
+                is_current,
+                actions: vec![Box::new(move |tx| {
+                    tx.send(AppEvent::RemoveChatgptAccountRequested {
+                        account_id: action_account_id.clone(),
+                        label: action_label.clone(),
+                    });
+                })],
+                dismiss_on_select: true,
+                search_value: Some(search_value),
+                ..Default::default()
+            });
+        }
+
+        self.bottom_pane.show_selection_view(SelectionViewParams {
+            title: Some("Remove saved ChatGPT account".to_string()),
+            footer_hint: Some(standard_popup_hint_line()),
+            items,
+            is_searchable: true,
+            search_placeholder: Some("Type to search accounts".to_string()),
+            ..Default::default()
+        });
+        self.request_redraw();
+    }
+
+    pub(crate) fn start_add_account_login(&mut self) {
+        let tx = self.app_event_tx.clone();
+        let codex_home = self.config.codex_home.clone();
+        let forced_chatgpt_workspace_id = self.config.forced_chatgpt_workspace_id.clone();
+        let auth_credentials_store_mode = self.config.cli_auth_credentials_store_mode;
+
+        self.add_info_message(
+            "Starting ChatGPT login flow for /addaccount...".to_string(),
+            None,
+        );
+
+        tokio::spawn(async move {
+            if let Err(err) =
+                upsert_active_chatgpt_account(&codex_home, auth_credentials_store_mode)
+            {
+                tracing::warn!(
+                    "failed to save currently active account before /addaccount: {err}"
+                );
+            }
+
+            let options = ServerOptions::new(
+                codex_home.to_path_buf(),
+                CLIENT_ID.to_string(),
+                forced_chatgpt_workspace_id,
+                auth_credentials_store_mode,
+            );
+
+            let server = match run_login_server(options) {
+                Ok(server) => server,
+                Err(err) => {
+                    tx.send(AppEvent::InsertHistoryCell(Box::new(
+                        history_cell::new_error_event(format!(
+                            "Failed to start local login server: {err}",
+                        )),
+                    )));
+                    return;
+                }
+            };
+
+            tx.send(AppEvent::InsertHistoryCell(Box::new(
+                history_cell::new_info_event(
+                    format!(
+                        "Local login server started on http://localhost:{}. If your browser did not open, visit: {}",
+                        server.actual_port, server.auth_url
+                    ),
+                    None,
+                ),
+            )));
+
+            match server.block_until_done().await {
+                Ok(()) => {
+                    match upsert_active_chatgpt_account(&codex_home, auth_credentials_store_mode) {
+                        Ok(Some(saved)) => {
+                            tx.send(AppEvent::ReloadAuthRequested);
+                            tx.send(AppEvent::InsertHistoryCell(Box::new(
+                                history_cell::new_info_event(
+                                    format!(
+                                        "Account added and saved: {}. Use /accounts to switch anytime.",
+                                        saved.label
+                                    ),
+                                    None,
+                                ),
+                            )));
+                        }
+                        Ok(None) => {
+                            tx.send(AppEvent::InsertHistoryCell(Box::new(
+                                history_cell::new_error_event(
+                                    "Login completed, but no ChatGPT credentials were found."
+                                        .to_string(),
+                                ),
+                            )));
+                        }
+                        Err(err) => {
+                            tx.send(AppEvent::InsertHistoryCell(Box::new(
+                                history_cell::new_error_event(format!(
+                                    "Login succeeded, but saving the account failed: {err}",
+                                )),
+                            )));
+                        }
+                    }
+                }
+                Err(err) => {
+                    tx.send(AppEvent::InsertHistoryCell(Box::new(
+                        history_cell::new_error_event(format!(
+                            "Account login did not complete: {err}",
+                        )),
+                    )));
+                }
+            }
+        });
     }
 
     /// Open the permissions popup (alias for /permissions).

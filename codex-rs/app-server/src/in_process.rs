@@ -250,6 +250,11 @@ pub struct InProcessClientHandle {
     client: InProcessClientSender,
     event_rx: mpsc::Receiver<InProcessServerEvent>,
     runtime_handle: tokio::task::JoinHandle<()>,
+    /// Super Codex: shared [`AuthManager`] used by this in-process
+    /// runtime. Exposed so higher-level clients (TUI) can drive
+    /// multi-account switch/reload directly against the same Arc
+    /// the processor uses, bypassing the RPC layer.
+    auth_manager: Arc<AuthManager>,
 }
 
 impl InProcessClientHandle {
@@ -329,6 +334,16 @@ impl InProcessClientHandle {
     pub fn sender(&self) -> InProcessClientSender {
         self.client.clone()
     }
+
+    /// Super Codex: returns a clone of the shared [`AuthManager`] that
+    /// backs this in-process runtime. TUI account-switch and reload
+    /// flows call into this Arc directly instead of going through the
+    /// RPC layer. The Arc is coordinated internally by its refresh
+    /// lock, so concurrent token refreshes and credential swaps stay
+    /// serialized.
+    pub fn auth_manager(&self) -> Arc<AuthManager> {
+        Arc::clone(&self.auth_manager)
+    }
 }
 
 /// Starts an in-process app-server runtime and performs initialize handshake.
@@ -363,6 +378,14 @@ fn start_uninitialized(args: InProcessStartArgs) -> InProcessClientHandle {
     let (client_tx, mut client_rx) = mpsc::channel::<InProcessClientMessage>(channel_capacity);
     let (event_tx, event_rx) = mpsc::channel::<InProcessServerEvent>(channel_capacity);
 
+    // Super Codex: build the shared AuthManager up front so the handle
+    // can expose it. The same Arc is handed to the processor below, so
+    // the embedded server and any TUI direct callers share one refresh
+    // lock.
+    let auth_manager =
+        AuthManager::shared_from_config(args.config.as_ref(), args.enable_codex_api_key_env);
+    let auth_manager_for_processor = Arc::clone(&auth_manager);
+
     let runtime_handle = tokio::spawn(async move {
         let (outgoing_tx, mut outgoing_rx) = mpsc::channel::<OutgoingEnvelope>(channel_capacity);
         let outgoing_message_sender = Arc::new(OutgoingMessageSender::new(outgoing_tx));
@@ -390,8 +413,9 @@ fn start_uninitialized(args: InProcessStartArgs) -> InProcessClientHandle {
         });
 
         let processor_outgoing = Arc::clone(&outgoing_message_sender);
-        let auth_manager =
-            AuthManager::shared_from_config(args.config.as_ref(), args.enable_codex_api_key_env);
+        // Super Codex: reuse the AuthManager built above so there is
+        // only one refresh lock across TUI + processor.
+        let auth_manager = auth_manager_for_processor;
         let config_manager = ConfigManager::new(
             args.config.codex_home.to_path_buf(),
             args.cli_overrides,
@@ -706,6 +730,7 @@ fn start_uninitialized(args: InProcessStartArgs) -> InProcessClientHandle {
         client: InProcessClientSender { client_tx },
         event_rx,
         runtime_handle,
+        auth_manager,
     }
 }
 

@@ -913,7 +913,7 @@ impl AuthDotJson {
         Self::from_external_tokens(&external)
     }
 
-    fn resolved_mode(&self) -> ApiAuthMode {
+    pub(super) fn resolved_mode(&self) -> ApiAuthMode {
         if let Some(mode) = self.auth_mode {
             return mode;
         }
@@ -1709,6 +1709,116 @@ impl AuthManager {
         self.auth_cached().as_ref().map(CodexAuth::auth_mode)
     }
 
+    /// Super Codex: mirror the currently-cached ChatGPT auth into the
+    /// on-disk account registry.
+    ///
+    /// The account registry stores an `AuthDotJson` snapshot per saved
+    /// account; without this hook those snapshots would stay pinned to
+    /// the credentials captured when the account was first added. Any
+    /// rotation that later happens through `refresh_token` / external
+    /// auth refresh would only land in `auth.json` but not in
+    /// `accounts.json`, so the next time the user switched back to
+    /// that account the registry would restore an already-rotated
+    /// `refresh_token` and produce a spurious "Please sign in again"
+    /// loop even though the live credentials were fine.
+    ///
+    /// The hook is **update-only**: it calls
+    /// `update_saved_chatgpt_account_if_exists`, which rewrites an
+    /// existing registry row in place but never inserts a new one. An
+    /// upsert here would silently re-add entries the user just removed
+    /// from `/removeaccount` (the remove-then-auto-rotate path calls
+    /// this hook before overwriting `auth.json`, so the in-memory
+    /// cached auth is still the removed account at that point).
+    ///
+    /// Called from:
+    /// - the tail of every successful token refresh
+    ///   (`refresh_and_persist_chatgpt_token`, `refresh_external_auth`)
+    ///   so registry rows advance in lockstep with `auth.json`;
+    /// - the top of `switch_to_saved_chatgpt_account` and
+    ///   `rotate_to_next_saved_chatgpt_account`, under the refresh
+    ///   lock, immediately before `auth.json` is overwritten with the
+    ///   target account — catches any refresh that landed between the
+    ///   previous switch and this one.
+    fn mirror_active_auth_into_registry(&self) {
+        let Some(auth) = self.auth_cached() else {
+            return;
+        };
+        let Some(auth_json) = auth.get_current_auth_json() else {
+            return;
+        };
+        if auth_json.resolved_mode() == ApiAuthMode::ApiKey {
+            return;
+        }
+        if let Err(err) =
+            crate::auth::account_registry::update_saved_chatgpt_account_if_exists(
+                &self.codex_home,
+                &auth_json,
+            )
+        {
+            tracing::warn!(
+                "failed to mirror refreshed ChatGPT auth into account registry: {err}"
+            );
+        }
+    }
+
+    /// Super Codex: atomically switch the active ChatGPT credentials
+    /// to a previously-saved account. Grabs the same `refresh_lock`
+    /// that `refresh_token` takes so it cannot race with a token
+    /// refresh in flight on behalf of the previous account — without
+    /// this coordination, an in-flight refresh would see the new
+    /// `auth.json` after the swap, detect an account-id mismatch, and
+    /// surface a spurious "signed in to another account" error.
+    pub async fn switch_to_saved_chatgpt_account(
+        &self,
+        codex_home: &std::path::Path,
+        auth_credentials_store_mode: AuthCredentialsStoreMode,
+        account_id: &str,
+    ) -> std::io::Result<crate::auth::account_registry::SavedChatgptAccount> {
+        let _guard = self
+            .refresh_lock
+            .acquire()
+            .await
+            .map_err(|_| std::io::Error::other("AuthManager refresh lock closed"))?;
+        // Persist current in-memory tokens back into the registry
+        // BEFORE overwriting auth.json with the target account. See
+        // `mirror_active_auth_into_registry` for why this matters.
+        self.mirror_active_auth_into_registry();
+        let selected = crate::auth::account_registry::switch_active_chatgpt_account(
+            codex_home,
+            auth_credentials_store_mode,
+            account_id,
+        )?;
+        self.reload();
+        Ok(selected)
+    }
+
+    /// Super Codex: atomically rotate to the next saved ChatGPT
+    /// account that is not in `exhausted_account_ids`. Used by the
+    /// usage-limit auto-rotation path in the core sampling loop. Same
+    /// locking contract as [`AuthManager::switch_to_saved_chatgpt_account`].
+    pub async fn rotate_to_next_saved_chatgpt_account(
+        &self,
+        codex_home: &std::path::Path,
+        auth_credentials_store_mode: AuthCredentialsStoreMode,
+        exhausted_account_ids: &std::collections::HashSet<String>,
+    ) -> std::io::Result<Option<crate::auth::account_registry::SavedChatgptAccount>> {
+        let _guard = self
+            .refresh_lock
+            .acquire()
+            .await
+            .map_err(|_| std::io::Error::other("AuthManager refresh lock closed"))?;
+        self.mirror_active_auth_into_registry();
+        let next = crate::auth::account_registry::rotate_to_next_saved_chatgpt_account(
+            codex_home,
+            auth_credentials_store_mode,
+            exhausted_account_ids,
+        )?;
+        if next.is_some() {
+            self.reload();
+        }
+        Ok(next)
+    }
+
     fn is_stale_for_proactive_refresh(auth: &CodexAuth) -> bool {
         let chatgpt_auth = match auth {
             CodexAuth::Chatgpt(chatgpt_auth) => chatgpt_auth,
@@ -1781,6 +1891,10 @@ impl AuthManager {
         )
         .map_err(RefreshTokenError::Transient)?;
         self.reload();
+        // Super Codex: keep the account registry snapshot fresh after
+        // every successful refresh so a later switch back to this
+        // account does not restore an already-rotated refresh_token.
+        self.mirror_active_auth_into_registry();
         Ok(())
     }
 
@@ -1801,6 +1915,10 @@ impl AuthManager {
         )
         .map_err(RefreshTokenError::from)?;
         self.reload();
+        // Super Codex: keep the account registry snapshot fresh after
+        // every successful refresh so a later switch back to this
+        // account does not restore an already-rotated refresh_token.
+        self.mirror_active_auth_into_registry();
 
         Ok(())
     }
