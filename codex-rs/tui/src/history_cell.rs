@@ -181,12 +181,30 @@ pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
     fn transcript_animation_tick(&self) -> Option<u64> {
         None
     }
+
+    /// Super Codex: if `false`, the cell renders its lines as-is and any
+    /// content beyond the viewport width is clipped horizontally rather
+    /// than wrapped onto new rows. Defaults to `true` (upstream
+    /// behaviour). Only cells whose visual identity depends on a fixed
+    /// column layout — the ANSI-Shadow splash — opt out.
+    fn wraps_at_viewport_edge(&self) -> bool {
+        true
+    }
 }
 
 impl Renderable for Box<dyn HistoryCell> {
     fn render(&self, area: Rect, buf: &mut Buffer) {
         let lines = self.display_lines(area.width);
-        let paragraph = Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false });
+        // Super Codex: opt-out cells (the splash) render without
+        // `.wrap()` so ratatui clips long lines at the viewport edge
+        // instead of spilling them onto a second visual row. On
+        // terminals that re-flow long lines on resize the full
+        // ASCII banner becomes visible again once the window widens.
+        let paragraph = if self.wraps_at_viewport_edge() {
+            Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false })
+        } else {
+            Paragraph::new(Text::from(lines))
+        };
         let y = if area.height == 0 {
             0
         } else {
@@ -503,6 +521,75 @@ impl HistoryCell for PlainHistoryCell {
     }
 }
 
+/// Super Codex: dedicated cell for the "SUPER CODEX" splash.
+///
+/// The art is picked to fit comfortably inside an 80-column
+/// terminal so a single banner looks fine everywhere — the TUI's
+/// scrollback commit path
+/// (`insert_history::insert_history_lines_with_mode`) pre-wraps
+/// every non-URL line through `adaptive_wrap_line(width)` before
+/// emitting terminal escapes, so any row wider than the current
+/// viewport would be folded onto two physical rows and stay that
+/// way forever (terminal scrollback is frozen by the emulator).
+/// Keeping every row ≤ ~63 columns avoids that fold on the common
+/// 80-column setup without needing a separate "narrow" variant.
+///
+/// `wraps_at_viewport_edge() -> false` is retained as a safety net
+/// for the (rare) case where the splash is rendered through the
+/// active viewport instead of the scrollback commit path.
+#[derive(Debug)]
+pub(crate) struct SplashHistoryCell;
+
+impl SplashHistoryCell {
+    fn lines() -> Vec<Line<'static>> {
+        // Compact 5-row figlet "Standard" rendering of "SUPER CODEX".
+        // Widest physical row is 63 cells, so the whole banner fits in
+        // any terminal from 80 columns upward without hitting
+        // `adaptive_wrap_line` in the scrollback commit path.
+        const ART: &[&str] = &[
+            r" ____  _   _ ____  _____ ____      ____ ___  ____  _______  __",
+            r"/ ___|| | | |  _ \| ____|  _ \    / ___/ _ \|  _ \| ____\ \/ /",
+            r"\___ \| | | | |_) |  _| | |_) |  | |  | | | | | | |  _|  \  / ",
+            r" ___) | |_| |  __/| |___|  _ <   | |__| |_| | |_| | |___ /  \ ",
+            r"|____/ \___/|_|   |_____|_| \_\   \____\___/|____/|_____/_/\_\",
+        ];
+        let mut lines: Vec<Line<'static>> = ART
+            .iter()
+            .map(|row| Line::from(Span::from((*row).to_string()).cyan()))
+            .collect();
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![
+            "  ".into(),
+            Span::from("An unofficial fork of OpenAI Codex").dim(),
+            "  ".into(),
+            Span::from("·").dim(),
+            "  ".into(),
+            Span::from("github.com/beltromatti/supercodex").dim(),
+        ]));
+        lines.push(Line::from(""));
+        lines
+    }
+}
+
+impl HistoryCell for SplashHistoryCell {
+    fn display_lines(&self, _width: u16) -> Vec<Line<'static>> {
+        Self::lines()
+    }
+
+    fn desired_height(&self, _width: u16) -> u16 {
+        u16::try_from(Self::lines().len()).unwrap_or(0)
+    }
+
+    fn wraps_at_viewport_edge(&self) -> bool {
+        false
+    }
+}
+
+/// ASCII splash rendered at the top of a fresh session.
+pub(crate) fn new_super_codex_splash() -> SplashHistoryCell {
+    SplashHistoryCell
+}
+
 #[cfg_attr(debug_assertions, allow(dead_code))]
 #[derive(Debug)]
 pub(crate) struct UpdateAvailableHistoryCell {
@@ -544,7 +631,7 @@ impl HistoryCell for UpdateAvailableHistoryCell {
             update_instruction,
             "",
             "See full release notes:",
-            "https://github.com/openai/codex/releases/latest"
+            "https://github.com/beltromatti/supercodex/releases/latest"
                 .cyan()
                 .underlined(),
         ];
@@ -1383,10 +1470,10 @@ impl HistoryCell for SessionHeaderHistoryCell {
 
         let make_row = |spans: Vec<Span<'static>>| Line::from(spans);
 
-        // Title line rendered inside the box: ">_ OpenAI Codex (vX)"
+        // Title line rendered inside the box: ">_ Super Codex (vX)"
         let title_spans: Vec<Span<'static>> = vec![
             Span::from(">_ ").dim(),
-            Span::from("OpenAI Codex").bold(),
+            Span::from("Super Codex").bold(),
             Span::from(" ").dim(),
             Span::from(format!("(v{})", self.version)).dim(),
         ];

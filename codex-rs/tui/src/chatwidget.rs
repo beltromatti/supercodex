@@ -244,8 +244,6 @@ use rand::Rng;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Color;
-use ratatui::style::Modifier;
-use ratatui::style::Style;
 use ratatui::style::Stylize;
 use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
@@ -917,6 +915,11 @@ pub(crate) struct ChatWidget {
     frame_requester: FrameRequester,
     // Whether to include the initial welcome banner on session configured
     show_welcome_banner: bool,
+    // Super Codex: whether the ASCII splash has already been shown once
+    // during this TUI process. Starts `false`, flips to `true` after the
+    // first paint at ChatWidget::new, so subsequent in-process `/new`
+    // sessions don't repaint the banner.
+    super_codex_splash_shown: bool,
     // One-shot tooltip override for the primary startup session.
     startup_tooltip_override: Option<String>,
     // When resuming an existing session (selected via resume picker), avoid an
@@ -5147,7 +5150,15 @@ impl ChatWidget {
             settings: fallback_default,
         };
 
-        let active_cell = Some(Self::placeholder_session_header_cell(&config));
+        // Super Codex: the upstream "loading…" placeholder header
+        // box was racing with our ASCII splash: because the TUI
+        // renders inline (no alternate screen), the placeholder's
+        // bottom-pane draw leaked into terminal scrollback and showed
+        // up *above* the splash as a duplicate "loading" box. Skipping
+        // the placeholder leaves only the splash (painted below,
+        // before the widget is returned) followed by the real session
+        // info cell once SessionConfigured arrives.
+        let active_cell: Option<Box<dyn HistoryCell>> = None;
 
         let current_cwd = Some(config.cwd.to_path_buf());
         let effective_service_tier = config.service_tier;
@@ -5250,6 +5261,7 @@ impl ChatWidget {
             submit_pending_steers_after_interrupt: false,
             queued_message_edit_binding,
             show_welcome_banner: is_first_run,
+            super_codex_splash_shown: false,
             startup_tooltip_override,
             suppress_session_configured_redraw: false,
             suppress_initial_user_message_submit: false,
@@ -5321,6 +5333,17 @@ impl ChatWidget {
             .bottom_pane
             .set_connectors_enabled(widget.connectors_enabled());
         widget.refresh_status_surfaces();
+
+        // Super Codex: paint the ASCII splash as the very first
+        // history entry so it anchors the start of every `supercodex`
+        // run before any session header renders. The flag is flipped
+        // here (rather than on SessionConfigured) so subsequent
+        // in-process /new / /resume / /fork sessions don't repaint
+        // the banner.
+        if !widget.super_codex_splash_shown {
+            widget.add_to_history(history_cell::new_super_codex_splash());
+            widget.super_codex_splash_shown = true;
+        }
 
         widget
     }
@@ -10343,22 +10366,6 @@ impl ChatWidget {
         }
 
         self.bottom_pane.plugins().map(Vec::as_slice)
-    }
-
-    /// Build a placeholder header cell while the session is configuring.
-    fn placeholder_session_header_cell(config: &Config) -> Box<dyn HistoryCell> {
-        let placeholder_style = Style::default().add_modifier(Modifier::DIM | Modifier::ITALIC);
-        Box::new(
-            history_cell::SessionHeaderHistoryCell::new_with_style(
-                DEFAULT_MODEL_DISPLAY_NAME.to_string(),
-                placeholder_style,
-                /*reasoning_effort*/ None,
-                /*show_fast_status*/ false,
-                config.cwd.to_path_buf(),
-                CODEX_CLI_VERSION,
-            )
-            .with_yolo_mode(history_cell::is_yolo_mode(config)),
-        )
     }
 
     /// Merge the real session info cell with any placeholder header to avoid double boxes.
