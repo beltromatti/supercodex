@@ -19,14 +19,14 @@ the fork end-to-end. For the high-level vision and disclaimer, see
 - **Base tag** for the current Super Codex line: `rust-v0.124.0`
   (upstream). Previous base was `rust-v0.121.0`; the 0.121 → 0.124
   rebase integrated 325 upstream commits and touched 49 files that
-  Super Codex also owns (Op enum layout, auth manager lock type
-  semaphore → mutex migration, session/* refactor splitting the
-  old codex.rs into turn.rs + handlers.rs + session.rs, TUI app/
-  submodule split, new collaboration-modes / permission-profile /
-  model-catalog / stream-controller scaffolds). Every fork
-  feature was re-ported on top of the new layout with
-  `cargo check --workspace --all-targets` clean and all account-
-  registry regression tests green.
+  Super Codex also owns (Op enum layout, auth manager refresh lock
+  type Mutex → Semaphore migration, session/* refactor splitting
+  the old `codex.rs` into `session/turn.rs` + `session/handlers.rs`
+  + `session/session.rs`, TUI `app/` submodule split, new
+  collaboration-modes / permission-profile / model-catalog /
+  stream-controller scaffolds). Every fork feature was re-ported on
+  top of the new layout with `cargo check --workspace --all-targets`
+  clean and all account-registry regression tests green.
 - **Super Codex tag**: `super-vX.Y.Z`, with `X.Y.Z` **strictly 1:1**
   with the upstream stable (`rust-vX.Y.Z`) the fork is currently
   rebased onto. Fork-only fixes (multi-account tweaks, branding
@@ -199,19 +199,20 @@ and pushes the result into the chat widget via
   auto-rotate and schedules an `AppEvent::ReloadAuthRequested`,
   which reaches the same handler chain.
 
-Why **not** a new RPC: the 0.121 app-server dispatch (`ClientRequest`
+Why **not** a new RPC: upstream's app-server dispatch (`ClientRequest`
 enum in
 [`codex-rs/app-server-protocol/`](codex-rs/app-server-protocol/))
 routes TUI→core operations through typed methods like
-`thread_compact_start` or `reload_user_config`, not a generic
-`Op` passthrough. An earlier Super Codex attempt added
-`Op::SwitchChatgptAccount` / `Op::ReloadAuth` variants and emitted
-them via `AppEvent::CodexOp`; the TUI's `submit_active_thread_op`
-then mapped them to `AppCommandView::Other`, no dispatch arm matched,
-and the user saw `■ Not available in TUI yet for thread <id>` with
-the switch silently aborted. Sharing the Arc directly avoids
-adding boilerplate across the protocol / server / client / TUI
-layers while keeping the refresh-lock coordination intact.
+`thread_compact_start` or `reload_user_config`, not a generic `Op`
+passthrough — both in 0.121 and 0.124. An earlier Super Codex
+attempt added `Op::SwitchChatgptAccount` / `Op::ReloadAuth`
+variants and emitted them via `AppEvent::CodexOp`; the TUI's
+`submit_active_thread_op` then mapped them to
+`AppCommandView::Other`, no dispatch arm matched, and the user
+saw `■ Not available in TUI yet for thread <id>` with the switch
+silently aborted. Sharing the Arc directly avoids adding
+boilerplate across the protocol / server / client / TUI layers
+while keeping the refresh-lock coordination intact.
 
 Why the lock is necessary: upstream's `refresh_token` captures an
 `expected_account_id` when it begins, and if it later finds that
@@ -334,18 +335,22 @@ serves `QuantTrio/Qwen3-VL-32B-Instruct-AWQ`.
   to write a `[model_providers.qwen_vllm]` block into
   `config.toml` so subsequent launches don't re-prompt.
 
-**Auto-reset on model change** —
-[`codex-rs/tui/src/app.rs`](codex-rs/tui/src/app.rs):
-
-- Helper `should_reset_provider_to_openai` returns `true` when the
-  persisted provider is `qwen_vllm` and the newly selected model is
-  **not** the Qwen slug.
-- In the `PersistModelSelection` handler, when that condition holds,
-  the in-memory config (`model_provider_id`, `model_provider`) is
-  flipped back to the `openai` entry from `model_providers`, the
-  status line refreshed, and the TOML edit also bumps the
-  `model_provider` key on disk to `"openai"`.
-- Unit tests cover the three branches of the helper.
+**Auto-reset on model change (deferred)** — the pre-0.124 fork also
+shipped an auto-reset that flipped `model_provider` in
+`config.toml` back to `openai` when the user picked a non-Qwen
+model after a Qwen session. The helper
+`should_reset_provider_to_openai` + the `PersistModelSelection`
+hook were **not** ported to 0.124 because the upstream config
+persistence path was refactored into `app/config_persistence.rs`
+and the old hook site no longer exists. The override works on the
+active session via `Op::OverrideTurnContext { provider_base_url }`
+for as long as the process lives; when the user re-launches
+`supercodex` after a Qwen session, the persisted provider is
+still `qwen_vllm`, so they must either manually edit `config.toml`
+or re-pick a model (the Qwen picker re-writes it) to flip back.
+This is a UX papercut, not correctness-critical; a follow-up
+commit can re-implement the hook on the new persistence path if
+it becomes a frequent complaint.
 
 ### 2.3 `inference-api/` — self-hosted vLLM stack
 
@@ -387,8 +392,10 @@ codebase.
 - **Startup splash** — a dedicated `SplashHistoryCell` and
   `new_super_codex_splash` function in
   [`codex-rs/tui/src/history_cell.rs`](codex-rs/tui/src/history_cell.rs)
-  build a 6-line ANSI Shadow ASCII "SUPER CODEX" banner (cyan) plus
-  a dim subtitle. `ChatWidget::new` in
+  build a compact 5-row "Standard" figlet rendering of
+  "SUPER CODEX" (cyan) — widest row is 63 cells, so the whole
+  banner fits any terminal ≥ 64 columns without wrapping — plus a
+  dim subtitle. `ChatWidget::new` in
   [`codex-rs/tui/src/chatwidget.rs`](codex-rs/tui/src/chatwidget.rs)
   paints the splash as the **first** history entry before the widget
   is returned, so it anchors the very top of every `supercodex` run
