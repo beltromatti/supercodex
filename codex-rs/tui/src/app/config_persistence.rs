@@ -354,6 +354,7 @@ impl App {
                         #[cfg(target_os = "windows")]
                         Some(windows_sandbox_level),
                         /*model*/ None,
+                        /*provider_base_url*/ None,
                         /*effort*/ None,
                         /*summary*/ None,
                         /*service_tier*/ None,
